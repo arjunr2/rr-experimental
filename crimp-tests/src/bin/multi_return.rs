@@ -14,7 +14,7 @@ bindgen!(
 
 fn main() -> Result<()> {
     component_run::<_, RunTy, (u32,), (u32,)>(
-        ComponentFmt::File("test-modules/components/multi_return.wat"),
+        ComponentFmt::File("test-modules/components/multi_return.wasm"),
         |mut linker| crimp_tests::bin!(@add linker, MyWorld),
         RunMode::InstantiateAndCallNTimes {
             name: "main",

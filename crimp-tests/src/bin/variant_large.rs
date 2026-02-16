@@ -88,7 +88,7 @@ fn main() -> Result<()> {
     });
 
     component_run::<_, RunTy, (DataPayload,), (String,)>(
-        ComponentFmt::File("test-modules/components/variant_large.wat"),
+        ComponentFmt::File("test-modules/components/variant_large.wasm"),
         |mut linker| crimp_tests::bin!(@add linker, MyWorld),
         RunMode::InstantiateAndCallOnce {
             name: "main",

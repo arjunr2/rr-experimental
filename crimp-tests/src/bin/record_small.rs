@@ -21,7 +21,7 @@ fn main() -> Result<()> {
         tags: vec!["coder".into(), "student".into()],
     };
     component_run::<_, RunTy, (UserProfile,), (String,)>(
-        ComponentFmt::File("test-modules/components/record_small.wat"),
+        ComponentFmt::File("test-modules/components/record_small.wasm"),
         |mut linker| crimp_tests::bin!(@add linker, MyWorld),
         RunMode::InstantiateAndCallOnce {
             name: "main",

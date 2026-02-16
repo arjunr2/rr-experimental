@@ -84,7 +84,7 @@ fn main() -> Result<()> {
         preferences: vec!["none".into()],
     };
     component_run::<_, RunTy, (UserProfile,), (String,)>(
-        ComponentFmt::File("test-modules/components/record_large.wat"),
+        ComponentFmt::File("test-modules/components/record_large.wasm"),
         |mut linker| crimp_tests::bin!(@add linker, MyWorld),
         RunMode::InstantiateAndCallOnce {
             name: "main",

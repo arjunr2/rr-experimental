@@ -13,6 +13,11 @@ anyhow.workspace = true
 env_logger.workspace = true
 clap.workspace = true
 log.workspace = true
+hex = "0.4.3"
 
 [features]
 multi-component = []
+specialized = []
+
+[target.'cfg(target_arch = "wasm32")']
+rustflags = ["-C", "link-arg=--export-memory",]

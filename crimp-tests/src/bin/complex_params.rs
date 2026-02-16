@@ -14,7 +14,7 @@ bindgen!(
 
 fn main() -> Result<()> {
     component_run::<_, RunTy, (Vec<u32>,), (Vec<u32>,)>(
-        ComponentFmt::File("test-modules/components/complex_params.wat"),
+        ComponentFmt::File("test-modules/components/complex_params.wasm"),
         |mut linker| crimp_tests::bin!(@add linker, MyWorld),
         RunMode::InstantiateAndCallOnce {
             name: "main",

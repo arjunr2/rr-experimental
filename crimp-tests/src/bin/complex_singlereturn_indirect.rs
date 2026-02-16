@@ -16,7 +16,7 @@ bindgen!(
 
 fn main() -> Result<()> {
     component_run::<_, RunTy, (u32,), (u32,)>(
-        ComponentFmt::File("test-modules/components/complex-singlereturn-indirect.wat"),
+        ComponentFmt::File("test-modules/components/complex-singlereturn-indirect.wasm"),
         |mut linker| crimp_tests::bin!(@add linker, Root),
         RunMode::InstantiateAndCallOnce {
             name: "main",

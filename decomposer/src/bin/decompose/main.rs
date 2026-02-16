@@ -1,6 +1,6 @@
 //! CLI tool to decompose a WebAssembly Component into its constituent modules.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use decomposer::wasmparser::{
     CanonicalOption, ComponentExternalKind, ExternalKind, InstantiationArgKind, Validator,
@@ -10,19 +10,21 @@ use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::rc::Rc;
 
+use decomposer::Component;
 use decomposer::ir::{
     CoreInstanceNode, Resolve, ResolvedComponentFunc, ResolvedComponentInstance, ResolvedCoreFunc,
     ResolvedCoreInstance, ResolvedModule,
 };
 use decomposer::parse_component;
+use decomposer::wirm::Module;
 use decomposer::wirm::ir::module::module_exports::Export;
 use decomposer::wirm::ir::types::CustomSection;
-use decomposer::wirm::Module;
-use decomposer::Component;
 
 mod linking;
 use linking::*;
@@ -55,6 +57,9 @@ struct CLI {
     /// Overwrite the output directory if it exists.
     #[arg(short = 'x', long = "overwrite")]
     overwrite: bool,
+    /// Merge the decomposed components with `wasm-merge` on output
+    #[arg(short = 'm', long = "merge")]
+    merge: bool,
     /// Output directory for decomposed modules from component.
     #[arg(short, long)]
     outdir: PathBuf,
@@ -138,6 +143,30 @@ impl CanonicalOptionsIndex {
         }
         (!options.is_empty()).then_some(opts_ref)
     }
+}
+
+/// Run `wasm-merge` on the modules at the path, produc
+fn merge_modules<T: AsRef<Path> + AsRef<OsStr>>(input: Vec<PathBuf>, output: T) -> Result<()> {
+    let mut cmd = Command::new("wasm-merge");
+    cmd.arg("--all-features");
+    for module_path in &input {
+        cmd.arg(module_path);
+        cmd.arg(module_path.file_stem().unwrap());
+    }
+    cmd.arg("-o").arg(&output);
+    log::debug!("Running: {:?}", cmd);
+    let output = cmd.output().unwrap();
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Failed to merge decomposed modules: {}",
+            str::from_utf8(&output.stderr)?
+        ));
+    }
+    // Delete the individual modules
+    for module_path in &input {
+        fs::remove_file(&module_path)?;
+    }
+    Ok(())
 }
 
 /// Validate assumptions about the component that must hold for decomposition to be valid
@@ -608,9 +637,10 @@ impl<'a> ComponentDecomposed<'a> {
         Ok(decomposed)
     }
 
-    fn dump_to_files(self, wat: bool, outdir: &PathBuf) -> Result<()> {
+    fn dump_to_files(self, wat: bool, outdir: &PathBuf, merge: bool) -> Result<()> {
+        let mut module_paths = vec![];
         for module in self.modules {
-            let bytes = if wat {
+            let bytes = if wat && !merge {
                 wasmprinter::print_bytes(module.encode())?.into_bytes()
             } else {
                 module.encode()
@@ -621,11 +651,25 @@ impl<'a> ComponentDecomposed<'a> {
                     .clone()
                     .expect("The module name should always be set for decomposed modules"),
             );
-            if !module_path.add_extension(if wat { "wat" } else { "wasm" }) {
+            if !module_path.set_extension(if wat && !merge { "wat" } else { "wasm" }) {
                 panic!("Failed to add extension to module path: {:?}", module_path);
             }
             log::info!("Writing module: {:?}", module_path);
-            fs::write(module_path, bytes)?;
+            fs::write(&module_path, bytes)?;
+            module_paths.push(module_path);
+        }
+
+        if merge {
+            let mut merged_path = outdir.join("merged.wasm");
+            merge_modules(module_paths, &merged_path)?;
+            // Optionally convert to WAT if the flag is set
+            if wat {
+                let bytes = fs::read(&merged_path)?;
+                let wat_bytes = wasmprinter::print_bytes(bytes)?.into_bytes();
+                merged_path.set_extension("wat");
+                fs::write(&merged_path, wat_bytes)?;
+            }
+            log::info!("Merged modules into {:?}", merged_path);
         }
         Ok(())
     }
@@ -650,6 +694,6 @@ fn main() -> Result<()> {
     fs::create_dir(&cli.outdir)?;
 
     let decomposed = ComponentDecomposed::from_component(component_rc, checksum)?;
-    decomposed.dump_to_files(cli.wat, &cli.outdir)?;
+    decomposed.dump_to_files(cli.wat, &cli.outdir, cli.merge)?;
     Ok(())
 }

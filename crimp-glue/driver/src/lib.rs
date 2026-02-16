@@ -10,11 +10,8 @@
 //! program that is further specialized to a set of components (and optionally, even a trace file
 //! if the entire trace is available ahead of time).
 
-// Things needed from the host:
-// 1. Trace file to read
-// 2.
-
 use anyhow::Result;
+use core::panic;
 use env_logger;
 use std::fs::File;
 use std::io::BufReader;
@@ -30,12 +27,19 @@ const DESERIALIZE_BUFFER_SIZE: Option<&str> = option_env!("DESERIALIZE_BUFFER_SI
 #[cfg(feature = "multi-component")]
 compile_error!("Multi-component support is not yet implemented in the Wasm replay driver.");
 
+// Single-component assumptions
+const CHECKSUM: Option<&str> = option_env!("CHECKSUM");
+
 // ===================================================================================
-// Import helpers from host or glue generator
+// Import helpers from host or glue code
 // ===================================================================================
 #[link(wasm_import_module = "crimp-host")]
 unsafe extern "C" {
-    fn log_string(ptr: *const u8, len: usize);
+    /// Get the checksum of the currently instantiated component/module
+    ///
+    /// The caller is expected to provide a buffer of 32 bytes to write the checksum into.
+    /// This is to avoid dynamic memory allocation in the driver.
+    fn get_checksum(checksum_buf: *mut u8);
 }
 /// ===================================================================================
 /// [`ReplayBuffer`] implementing a [`Replayer`] (copied mostly implementation from Wasmtime)
@@ -95,7 +99,6 @@ impl Replayer for ReplayBuffer {
             trace_settings: RecordSettings::default(),
             eof_encountered: false,
         };
-        println!("Deserialize buffer size: {}", buf.deser_buffer.len());
 
         let signature: common_events::TraceSignatureEvent = buf.next_event_typed()?;
         // NOTE: Trace checksum is not needed to be validated here since this replay
@@ -139,12 +142,54 @@ pub extern "C" fn run_replay() {
             validate: false,
             deserialize_buffer_size: DESERIALIZE_BUFFER_SIZE
                 .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(1024 * 1024), // Default to 1 MiB if not set or invalid
+                .unwrap_or(1024), // Default to 1 KiB if not set or invalid
         },
     )
     .unwrap();
 
+    let mut instantiated = false;
+    let expected_checksum: [u8; 32] = if let Some(checksum_str) = CHECKSUM {
+        hex::decode(checksum_str)
+            .unwrap()
+            .try_into()
+            .expect("Invalid CHECKSUM environment variable; expected a 32-byte hex string.")
+    } else {
+        Default::default()
+    };
     while let Some(event_res) = replayer.next() {
         let event = event_res.unwrap();
+        match event {
+            // Instantiation events
+            RREvent::ComponentInstantiation(e) => {
+                if instantiated {
+                    panic!(
+                        "Multiple instantiations not supported in this feature set. Consider the `multi-component` feature"
+                    );
+                }
+                instantiated = true;
+                assert_eq!(
+                    *e.component, expected_checksum,
+                    "Checksum in trace and component do not match. Ensure CHECKSUM env variable is set correctly."
+                );
+            }
+            RREvent::CoreWasmInstantiation(e) => {
+                if instantiated {
+                    panic!(
+                        "Multiple instantiations not supported in this feature set. Consider the `multi-component` feature"
+                    );
+                }
+                instantiated = true;
+                assert_eq!(
+                    *e.module, expected_checksum,
+                    "Checksum in trace and module do not match. Ensure CHECKSUM env variable is set correctly."
+                );
+            }
+            // Calls
+            RREvent::ComponentWasmFuncBegin(e) => {}
+            _ => {
+                //panic!("Invalid event encountered in replay driver!");
+            }
+        }
     }
+    log::info!("Replay completed successfully!");
 }

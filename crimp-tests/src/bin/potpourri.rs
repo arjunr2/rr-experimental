@@ -4,7 +4,7 @@ bindgen!(
     "my-world" in "../test-modules/components/wit/potpourri.wit"
 );
 
-use component::test_package::env::{PotPayload, SmallRecord, PaymentMethod};
+use component::test_package::env::{PaymentMethod, PotPayload, SmallRecord};
 
 impl component::test_package::env::Host for MyState {
     fn process_pot(&mut self, mut p: PotRecord) -> PotRecord {
@@ -25,7 +25,9 @@ impl component::test_package::env::Host for MyState {
 
         p.payload = match p.payload {
             PotPayload::Numbers(mut nums) => {
-                for n in nums.iter_mut() { *n = *n + 10; }
+                for n in nums.iter_mut() {
+                    *n = *n + 10;
+                }
                 PotPayload::Numbers(nums)
             }
             PotPayload::Small(mut s) => {
@@ -37,12 +39,12 @@ impl component::test_package::env::Host for MyState {
                 let transformed = match pm {
                     // mask credit card
                     PaymentMethod::CreditCard(mut c) => {
-                        if c.len() > 4 { c = format!("****{}", &c[c.len()-4..]); }
+                        if c.len() > 4 {
+                            c = format!("****{}", &c[c.len() - 4..]);
+                        }
                         PaymentMethod::CreditCard(c)
                     }
-                    PaymentMethod::Paypal(e) => {
-                        PaymentMethod::Paypal(e.to_lowercase())
-                    }
+                    PaymentMethod::Paypal(e) => PaymentMethod::Paypal(e.to_lowercase()),
                     PaymentMethod::Cash => PaymentMethod::Cash,
                 };
                 PotPayload::Payment(transformed)
@@ -62,19 +64,22 @@ impl component::test_package::env::Host for MyState {
 
 fn main() -> Result<()> {
     use std::result::Result as StdResult;
-    
+
     let input = PotRecord {
         id: 7,
         name: "potpourri".to_string(),
         active: true,
         score: 3.14,
         opt_tags: Some(vec!["alpha".to_string(), "beta".to_string()]),
-        payload: PotPayload::Small(SmallRecord { count: 2, ratio: 0.5 }),
+        payload: PotPayload::Small(SmallRecord {
+            count: 2,
+            ratio: 0.5,
+        }),
         validation: StdResult::Ok("initial state".to_string()),
     };
 
     component_run::<_, RunTy, (PotRecord,), (String,)>(
-        ComponentFmt::File("test-modules/components/potpourri.wat"),
+        ComponentFmt::File("test-modules/components/potpourri.wasm"),
         |mut linker| crimp_tests::bin!(@add linker, MyWorld),
         RunMode::InstantiateAndCallOnce {
             name: "main",
