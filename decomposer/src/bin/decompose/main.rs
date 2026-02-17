@@ -1,6 +1,6 @@
 //! CLI tool to decompose a WebAssembly Component into its constituent modules.
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use decomposer::wasmparser::{
     CanonicalOption, ComponentExternalKind, ExternalKind, InstantiationArgKind, Validator,
@@ -58,8 +58,15 @@ struct CLI {
     #[arg(short = 'x', long = "overwrite")]
     overwrite: bool,
     /// Merge the decomposed components with `wasm-merge` on output
-    #[arg(short = 'm', long = "merge")]
+    #[arg(short, long)]
     merge: bool,
+    /// When `glue` is false, writes necessary information into a custom section for replay, and relies on
+    /// engine support to read this information and drive the replay accordingly.
+    ///
+    /// When `glue` is true, we generate a glue and replay driver Wasm module, enabling one to run
+    /// the replay completely as Wasm without special engine support
+    #[arg(short, long)]
+    glue: bool,
     /// Output directory for decomposed modules from component.
     #[arg(short, long)]
     outdir: PathBuf,
@@ -157,10 +164,10 @@ fn merge_modules<T: AsRef<Path> + AsRef<OsStr>>(input: Vec<PathBuf>, output: T) 
     log::debug!("Running: {:?}", cmd);
     let output = cmd.output().unwrap();
     if !output.status.success() {
-        return Err(anyhow!(
+        bail!(
             "Failed to merge decomposed modules: {}",
             str::from_utf8(&output.stderr)?
-        ));
+        );
     }
     // Delete the individual modules
     for module_path in &input {
@@ -573,6 +580,7 @@ fn linking_metadata<'a>(
 #[derive(Default)]
 struct ComponentDecomposed<'a> {
     modules: Vec<Module<'a>>,
+    glue: Option<Module<'a>>,
 }
 
 impl<'a> ComponentDecomposed<'a> {
@@ -586,7 +594,7 @@ impl<'a> ComponentDecomposed<'a> {
         Ok(())
     }
 
-    fn from_linking_metadata(linking: LinkingMetadata<'a>) -> Result<Self> {
+    fn from_linking_metadata(linking: LinkingMetadata<'a>, generate_glue: bool) -> Result<Self> {
         // Sanity checks on the linking metadata before we use it for decomposition
         let l1 = linking.mm.keys().collect::<HashSet<_>>();
         let l2 = linking
@@ -621,6 +629,7 @@ impl<'a> ComponentDecomposed<'a> {
 
         Ok(Self {
             modules: crimp_modules,
+            glue: None,
         })
     }
 
@@ -628,15 +637,17 @@ impl<'a> ComponentDecomposed<'a> {
     fn from_component(
         component_rc: Rc<RefCell<Component<'a>>>,
         checksum: Checksum,
+        generate_glue: bool,
     ) -> Result<Self> {
         let component = component_rc.borrow();
         validate_assumptions(&component)?;
         let lm = linking_metadata(&component, checksum)?;
-        let decomposed = Self::from_linking_metadata(lm)?;
+        let decomposed = Self::from_linking_metadata(lm, generate_glue)?;
         decomposed.validate_modules()?;
         Ok(decomposed)
     }
 
+    /// Write the decomposed modules to files in the output directory, optionally merging them with `wasm-merge`
     fn dump_to_files(self, wat: bool, outdir: &PathBuf, merge: bool) -> Result<()> {
         let mut module_paths = vec![];
         for module in self.modules {
@@ -693,7 +704,7 @@ fn main() -> Result<()> {
     }
     fs::create_dir(&cli.outdir)?;
 
-    let decomposed = ComponentDecomposed::from_component(component_rc, checksum)?;
+    let decomposed = ComponentDecomposed::from_component(component_rc, checksum, cli.glue)?;
     decomposed.dump_to_files(cli.wat, &cli.outdir, cli.merge)?;
     Ok(())
 }

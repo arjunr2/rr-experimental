@@ -16,8 +16,10 @@ log.workspace = true
 hex = "0.4.3"
 
 [features]
+default = ["glue"]
 multi-component = []
-specialized = []
+# When disabled, this feature allows building the driver without glue imports (useful for testing)
+glue = []
 
 [target.'cfg(target_arch = "wasm32")']
 rustflags = ["-C", "link-arg=--export-memory",]

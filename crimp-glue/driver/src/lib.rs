@@ -15,31 +15,61 @@ use core::panic;
 use env_logger;
 use std::fs::File;
 use std::io::BufReader;
-use wasm_crimp::common_events;
+use std::mem::MaybeUninit;
+use wasm_crimp::{
+    EventError, ExportIndex, RRComponentInstanceId, RRModuleInstanceId, common_events,
+};
 use wasm_crimp::{
     RREvent, RecordSettings, ReplayError, ReplayReader, ReplaySettings, Replayer,
     from_replay_reader,
 };
 
-const TRACE_FILEPATH: &str = env!("TRACE_FILEPATH");
-const DESERIALIZE_BUFFER_SIZE: Option<&str> = option_env!("DESERIALIZE_BUFFER_SIZE"); // 1 MiB buffer for deserialization
-
 #[cfg(feature = "multi-component")]
 compile_error!("Multi-component support is not yet implemented in the Wasm replay driver.");
 
-// Single-component assumptions
-const CHECKSUM: Option<&str> = option_env!("CHECKSUM");
+const TRACE_FILEPATH: &str = env!("TRACE_FILEPATH");
+const DESERIALIZE_BUFFER_SIZE: Option<&str> = option_env!("DESERIALIZE_BUFFER_SIZE"); // 1 MiB buffer for deserialization
 
 // ===================================================================================
-// Import helpers from host or glue code
+// Global State
 // ===================================================================================
-#[link(wasm_import_module = "crimp-host")]
+static mut REPLAYER: MaybeUninit<ReplayBuffer> = MaybeUninit::uninit();
+
+macro_rules! access (
+    ($replayer:ident) => (
+        unsafe {
+            let raw_ptr = std::ptr::addr_of_mut!($replayer);
+            (*raw_ptr).assume_init_mut()
+        }
+    )
+);
+
+// ===================================================================================
+// Import helpers from the glue code
+// ===================================================================================
+#[cfg(feature = "glue")]
+#[link(wasm_import_module = "crimp-glue")]
 unsafe extern "C" {
-    /// Get the checksum of the currently instantiated component/module
+    /// Get the checksum of the currently instantiated component/module being driven.
     ///
-    /// The caller is expected to provide a buffer of 32 bytes to write the checksum into.
+    /// The caller is expected to populate the buffer with 32 bytes to write the checksum into.
     /// This is to avoid dynamic memory allocation in the driver.
-    fn get_checksum(checksum_buf: *mut u8);
+    fn get_sha256_checksum(checksum_buf: *mut u8);
+
+    /// A dispatch method that calls the appropriate realloc for the given export's lowering.
+    fn dispatch_realloc(
+        export_index: u32,
+        old_addr: u32,
+        old_size: u32,
+        old_align: u32,
+        new_size: u32,
+    ) -> u32;
+
+    /// A dispatch method that calls the appropriate core function post-lowering function for the given export.
+    ///
+    /// The glue logic already has the signature so we don't need to pass them, just the pointer to the encoded
+    /// recorded return values is sufficient. `num_args` is only passed now for a simple assertion.
+    fn dispatch_core_func(export_index: u32, args: *const u8, num_args: u32) -> u64;
 }
 /// ===================================================================================
 /// [`ReplayBuffer`] implementing a [`Replayer`] (copied mostly implementation from Wasmtime)
@@ -127,69 +157,184 @@ impl Replayer for ReplayBuffer {
     }
 }
 
+/// ===================================================================================
+/// Helper and glue export methods for main replayer
+/// ===================================================================================
+enum Instance {
+    Component(RRComponentInstanceId),
+    Module(RRModuleInstanceId),
+}
+
+fn check_instance(
+    instance: &Option<Instance>,
+    read_checksum: [u8; 32],
+    expected_checksum: [u8; 32],
+) {
+    if instance.is_some() {
+        panic!(
+            "Multiple instantiations not supported in this feature set. Consider the `multi-component` feature"
+        );
+    }
+    #[cfg(feature = "glue")]
+    assert_eq!(
+        read_checksum, expected_checksum,
+        "Checksum in trace and component do not match. Ensure CHECKSUM env variable is set correctly."
+    );
+}
+
+fn throw_event_error(error: impl EventError) -> ! {
+    panic!("Replay encountered a EventError in Trace: {}", error);
+}
+
+/// Lowering logic for Wasm function calls
+unsafe fn replay_wasm_call(export_index: ExportIndex) {
+    let mut realloc_return_stack: Vec<u32> = Vec::new();
+    while let Some(event_res) = access!(REPLAYER).next() {
+        let event = event_res.unwrap();
+        match event {
+            RREvent::ComponentLowerFlatEntry(_) | RREvent::ComponentLowerMemoryEntry(_) => {
+                log::warn!(
+                    "Lowering entry validation cannot currently be performed in the Wasm replay driver, ignoring....."
+                );
+            }
+            RREvent::ComponentReallocEntry(e) => {
+                #[cfg(feature = "glue")]
+                unsafe {
+                    realloc_return_stack.push(dispatch_realloc(
+                        export_index.as_u32(),
+                        e.old_addr.try_into().unwrap(),
+                        e.old_size.try_into().unwrap(),
+                        e.old_align,
+                        e.new_size.try_into().unwrap(),
+                    ));
+                }
+            }
+            RREvent::ComponentReallocReturn(e) => match e.0.ret() {
+                Ok(r) => {
+                    #[cfg(feature = "glue")]
+                    {
+                        let r32: u32 = r.try_into().unwrap();
+                        assert_eq!(
+                            r32,
+                            realloc_return_stack.pop().unwrap(),
+                            "Realloc return value does not match the recorded return value!"
+                        );
+                    }
+                }
+                Err(x) => throw_event_error(x),
+            },
+            RREvent::ComponentMemorySliceWrite(e) => {}
+            RREvent::ComponentLowerFlatReturn(e) => {
+                if let Err(x) = e.0.ret() {
+                    throw_event_error(x);
+                }
+            }
+            RREvent::ComponentWasmFuncEntry(e) => {
+                #[cfg(feature = "glue")]
+                unsafe {
+                    dispatch_core_func(
+                        export_index.as_u32(),
+                        e.args.bytes.as_ptr(),
+                        e.args.sizes.len() as u32,
+                    );
+                }
+                break;
+            }
+            RREvent::WasmFuncReturn(e) => match e.0.ret() {
+                Ok(r) => {
+                    log::info!(
+                        "Wasm function returned successfully with return value: {:?}",
+                        r
+                    );
+                }
+                Err(x) => throw_event_error(x),
+            },
+            _ => {
+                panic!("Invalid event {:?} encountered in wasm call replay!", event);
+            }
+        }
+    }
+    assert!(realloc_return_stack.is_empty());
+}
+
+/// Lowering logic for import calls from Wasm to Host
 #[unsafe(no_mangle)]
-pub extern "C" fn run_replay() {
+pub unsafe extern "C" fn replay_host_call() {
+    //while let Some(event_res) = access!(REPLAYER).next() {
+    //    let event = event_res.unwrap();
+    //}
+}
+
+// ===================================================================================
+// The main entrypoint for the replay driver, intended to be called from the Wasm engine
+// ===================================================================================
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn run_replay() {
     env_logger::init();
     log::debug!("Trace file: {}", TRACE_FILEPATH);
     let file = File::open(TRACE_FILEPATH)
         .expect(&format!("Failed to open trace file: {}", TRACE_FILEPATH));
-    let reader = BufReader::new(file);
 
-    let mut replayer = ReplayBuffer::new_replayer(
-        reader,
-        ReplaySettings {
-            // For now, we don't support validation in wasm driver
-            validate: false,
-            deserialize_buffer_size: DESERIALIZE_BUFFER_SIZE
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(1024), // Default to 1 KiB if not set or invalid
-        },
-    )
-    .unwrap();
+    let replayer = std::ptr::addr_of_mut!(REPLAYER);
+    // Initialize the global replayer state
+    unsafe {
+        (*replayer).write(
+            ReplayBuffer::new_replayer(
+                BufReader::new(file),
+                ReplaySettings {
+                    // For now, we don't support validation in wasm driver
+                    validate: false,
+                    deserialize_buffer_size: DESERIALIZE_BUFFER_SIZE
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(1024), // Default to 1 KiB if not set or invalid
+                },
+            )
+            .unwrap(),
+        );
+    }
 
-    let mut instantiated = false;
-    let expected_checksum: [u8; 32] = if let Some(checksum_str) = CHECKSUM {
-        hex::decode(checksum_str)
-            .unwrap()
-            .try_into()
-            .expect("Invalid CHECKSUM environment variable; expected a 32-byte hex string.")
-    } else {
-        Default::default()
-    };
-    while let Some(event_res) = replayer.next() {
+    let mut instance: Option<Instance> = None;
+    let mut expected_checksum: [u8; 32] = Default::default();
+    #[cfg(feature = "glue")]
+    unsafe {
+        get_sha256_checksum(expected_checksum.as_mut_ptr());
+    }
+
+    // Top-level events: Wasm to Host function calls
+    while let Some(event_res) = access!(REPLAYER).next() {
         let event = event_res.unwrap();
         match event {
             // Instantiation events
             RREvent::ComponentInstantiation(e) => {
-                if instantiated {
-                    panic!(
-                        "Multiple instantiations not supported in this feature set. Consider the `multi-component` feature"
-                    );
-                }
-                instantiated = true;
-                assert_eq!(
-                    *e.component, expected_checksum,
-                    "Checksum in trace and component do not match. Ensure CHECKSUM env variable is set correctly."
-                );
+                check_instance(&instance, *e.component, expected_checksum);
+                instance = Some(Instance::Component(e.instance));
             }
             RREvent::CoreWasmInstantiation(e) => {
-                if instantiated {
-                    panic!(
-                        "Multiple instantiations not supported in this feature set. Consider the `multi-component` feature"
-                    );
-                }
-                instantiated = true;
-                assert_eq!(
-                    *e.module, expected_checksum,
-                    "Checksum in trace and module do not match. Ensure CHECKSUM env variable is set correctly."
+                check_instance(&instance, *e.module, expected_checksum);
+                instance = Some(Instance::Module(e.instance));
+            }
+            // Host to Wasm function call events
+            RREvent::ComponentWasmFuncBegin(e) => unsafe {
+                replay_wasm_call(e.func_index);
+            },
+            RREvent::ComponentPostReturn(e) => unsafe {
+                replay_wasm_call(e.func_index);
+            },
+            RREvent::CoreWasmFuncEntry(e) => {
+                panic!("Core wasm function calls not supported yet..");
+            }
+            _ => {
+                #[cfg(feature = "glue")]
+                panic!(
+                    "Invalid event {:?} encountered in top-level replay driver!",
+                    event
                 );
             }
-            // Calls
-            RREvent::ComponentWasmFuncBegin(e) => {}
-            _ => {
-                //panic!("Invalid event encountered in replay driver!");
-            }
         }
+    }
+    // Cleanup the replayer state
+    unsafe {
+        (*replayer).assume_init_drop();
     }
     log::info!("Replay completed successfully!");
 }
