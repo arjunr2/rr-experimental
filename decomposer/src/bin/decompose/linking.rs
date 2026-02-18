@@ -2,9 +2,11 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::ops::Deref;
 
-use decomposer::wirm::ir::id::ImportsID as WirmImportsID;
 use decomposer::wirm::Module;
+use decomposer::wirm::ir::id::ImportsID as WirmImportsID;
 use serde::Serialize;
+
+use crate::glue::GlueBuilder;
 
 /// Unified naming of instances from IDs
 pub fn module_name_from_ids(module_id: ModuleID, instance_id: ModuleInstanceID) -> String {
@@ -147,7 +149,7 @@ pub struct LinkingMetadata<'a> {
     pub export_funcs: HashMap<ModuleInstanceID, Vec<ExportFuncMetadata>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 /// Information about canonical adapters (just Lower for now) for imports in the custom section
 struct ImportAdapterCrimpData {
     /// The import index that this adapter is for
@@ -178,45 +180,42 @@ impl<'a> LinkingMetadata<'a> {
         &self.mm[&module_id].module
     }
 
-    /// Serialize the crimp section for a single module's instance
-    pub fn serialize_crimp_section(
+    /// Construct the adapted module (with imports and module renamed) from the instance, and get its adapter data
+    fn construct_adapted_module(
         &self,
         instance_id: ModuleInstanceID,
-    ) -> Result<(Module<'a>, Vec<u8>)> {
+    ) -> (Module<'a>, Vec<ImportAdapterCrimpData>) {
         let assigned_name =
             |instance_id| module_name_from_ids(self.module_id(instance_id), instance_id);
 
         // Module wiring
         let mut module = self.module(instance_id).clone();
         module.module_name = Some(assigned_name(instance_id));
-
-        let imports = self.instantiations[&instance_id].imports.clone();
         let mut populated = vec![false; module.imports.len()];
-        let mut counter = 0;
-        // For use in custom section encoding
         let mut import_adapters = vec![];
+        let imports = &self.instantiations[&instance_id].imports;
         for (idx, import_kind) in imports {
-            populated[*idx as usize] = true;
+            populated[**idx as usize] = true;
             match import_kind {
                 ImportKind::Builtin => {
+                    let idx = WirmImportsID(**idx);
                     // Engine will stub with the replay result
                     // Just provide a nice readable name
                     module.imports.set_import_name(
                         "crimp-replay".into(),
-                        format!("builtin{}", counter),
-                        WirmImportsID(*idx),
+                        module.imports.get(idx).name.to_string(),
+                        idx,
                     );
-                    counter += 1;
                 }
                 ImportKind::TrueImport(opts) => {
+                    let wirm_idx = WirmImportsID(**idx);
                     // Engine will stub with the replay result
                     // Just provide a nice readable name
                     module.imports.set_import_name(
                         "crimp-replay".into(),
-                        format!("stub{}", counter),
-                        WirmImportsID(*idx),
+                        module.imports.get(wirm_idx).name.to_string(),
+                        wirm_idx,
                     );
-                    counter += 1;
                     if let Some(opts) = opts {
                         assert!(
                             opts.post_return.is_none(),
@@ -224,7 +223,7 @@ impl<'a> LinkingMetadata<'a> {
                         );
                         // When memory and realloc are always set together, if present
                         import_adapters.push(ImportAdapterCrimpData {
-                            target: idx,
+                            target: *idx,
                             memory: opts.memory.clone(),
                             realloc: opts.realloc.clone(),
                         });
@@ -232,9 +231,9 @@ impl<'a> LinkingMetadata<'a> {
                 }
                 ImportKind::Rename { package, member } => {
                     module.imports.set_import_name(
-                        assigned_name(package),
-                        member,
-                        WirmImportsID(*idx),
+                        assigned_name(*package),
+                        member.clone(),
+                        WirmImportsID(**idx),
                     );
                 }
             }
@@ -245,7 +244,25 @@ impl<'a> LinkingMetadata<'a> {
             instance_id,
             populated
         );
+        (module, import_adapters)
+    }
 
+    /// Adapt the module and add bindings for the instance to the glue
+    pub fn adapt_and_update_glue(
+        &self,
+        instance_id: ModuleInstanceID,
+        glue: &mut GlueBuilder<'a>,
+    ) -> Result<Module<'a>> {
+        let (module, import_adapters) = self.construct_adapted_module(instance_id);
+        Ok(module)
+    }
+
+    /// Adapt and serialize required linking information into the crimp custom section for a single module's instance
+    pub fn adapt_and_serialize_crimp_section(
+        &self,
+        instance_id: ModuleInstanceID,
+    ) -> Result<(Module<'a>, Vec<u8>)> {
+        let (module, import_adapters) = self.construct_adapted_module(instance_id);
         // Custom section
         let empty = vec![];
         let data = CrimpSectionData {

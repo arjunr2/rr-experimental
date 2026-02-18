@@ -11,10 +11,10 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
+use std::{fs, vec};
 
 use decomposer::Component;
 use decomposer::ir::{
@@ -28,6 +28,9 @@ use decomposer::wirm::ir::types::CustomSection;
 
 mod linking;
 use linking::*;
+
+mod glue;
+use glue::*;
 
 macro_rules! unsupported {
     // Single argument: unconditional error
@@ -65,8 +68,10 @@ struct CLI {
     ///
     /// When `glue` is true, we generate a glue and replay driver Wasm module, enabling one to run
     /// the replay completely as Wasm without special engine support
-    #[arg(short, long)]
+    #[arg(short, long, default_value_t = false)]
     glue: bool,
+    #[command(flatten)]
+    glue_args: GlueArgs,
     /// Output directory for decomposed modules from component.
     #[arg(short, long)]
     outdir: PathBuf,
@@ -580,13 +585,17 @@ fn linking_metadata<'a>(
 #[derive(Default)]
 struct ComponentDecomposed<'a> {
     modules: Vec<Module<'a>>,
-    glue: Option<Module<'a>>,
+    glue: Option<DriverGlueModules<'a>>,
 }
 
 impl<'a> ComponentDecomposed<'a> {
     /// Validate all modules in the decomposed representation.
     fn validate_modules(&self) -> Result<()> {
-        for module in &self.modules {
+        for module in self
+            .modules
+            .iter()
+            .chain(self.glue.iter().flat_map(|glue| [&glue.driver, &glue.glue]))
+        {
             Validator::new()
                 .validate_all(&module.encode())
                 .with_context(|| "Module validation failed")?;
@@ -594,7 +603,10 @@ impl<'a> ComponentDecomposed<'a> {
         Ok(())
     }
 
-    fn from_linking_metadata(linking: LinkingMetadata<'a>, generate_glue: bool) -> Result<Self> {
+    fn from_linking_metadata(
+        linking: LinkingMetadata<'a>,
+        glue_args: Option<GlueArgs>,
+    ) -> Result<Self> {
         // Sanity checks on the linking metadata before we use it for decomposition
         let l1 = linking.mm.keys().collect::<HashSet<_>>();
         let l2 = linking
@@ -613,36 +625,52 @@ impl<'a> ComponentDecomposed<'a> {
             "Exported functions should only come from instantiated modules"
         );
 
-        let crimp_modules = linking
-            .instantiations
-            .keys()
-            .map(|instance_id| {
-                let (mut crimp_module, crimp_section) =
-                    linking.serialize_crimp_section(*instance_id)?;
-                let _cid = crimp_module.add_custom_section(CustomSection {
-                    name: "crimp-replay",
-                    data: Cow::from(crimp_section),
-                });
-                Ok(crimp_module)
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let (modules, glue) = if let Some(args) = glue_args {
+            // Generate glue and driver bindings
+            let mut builder = GlueBuilder::new();
+            let crimp_modules = linking
+                .instantiations
+                .keys()
+                .map(|instance_id| linking.adapt_and_update_glue(*instance_id, &mut builder))
+                .collect::<Result<Vec<_>>>()?;
+            (
+                crimp_modules,
+                Some(DriverGlueModules::from_path_and_builder(
+                    args.trace_path.unwrap(),
+                    builder,
+                )),
+            )
+        } else {
+            // Serialize into custom section
+            let crimp_modules = linking
+                .instantiations
+                .keys()
+                .map(|instance_id| {
+                    let (mut crimp_module, crimp_section) =
+                        linking.adapt_and_serialize_crimp_section(*instance_id)?;
+                    let _cid = crimp_module.add_custom_section(CustomSection {
+                        name: "crimp-replay",
+                        data: Cow::from(crimp_section),
+                    });
+                    Ok(crimp_module)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            (crimp_modules, None)
+        };
 
-        Ok(Self {
-            modules: crimp_modules,
-            glue: None,
-        })
+        Ok(Self { modules, glue })
     }
 
     /// Produce a [ComponentDecomposed] from a [Component]
     fn from_component(
         component_rc: Rc<RefCell<Component<'a>>>,
         checksum: Checksum,
-        generate_glue: bool,
+        glue_args: Option<GlueArgs>,
     ) -> Result<Self> {
         let component = component_rc.borrow();
         validate_assumptions(&component)?;
         let lm = linking_metadata(&component, checksum)?;
-        let decomposed = Self::from_linking_metadata(lm, generate_glue)?;
+        let decomposed = Self::from_linking_metadata(lm, glue_args)?;
         decomposed.validate_modules()?;
         Ok(decomposed)
     }
@@ -650,7 +678,11 @@ impl<'a> ComponentDecomposed<'a> {
     /// Write the decomposed modules to files in the output directory, optionally merging them with `wasm-merge`
     fn dump_to_files(self, wat: bool, outdir: &PathBuf, merge: bool) -> Result<()> {
         let mut module_paths = vec![];
-        for module in self.modules {
+        for module in self.modules.into_iter().chain(
+            self.glue
+                .into_iter()
+                .flat_map(|glue| [glue.driver, glue.glue]),
+        ) {
             let bytes = if wat && !merge {
                 wasmprinter::print_bytes(module.encode())?.into_bytes()
             } else {
@@ -689,6 +721,12 @@ impl<'a> ComponentDecomposed<'a> {
 fn main() -> Result<()> {
     env_logger::init();
     let cli = CLI::parse();
+    println!("CLI: {:?}", cli);
+    if cli.glue ^ cli.glue_args.trace_path.is_some() {
+        bail!("Glue args must be provided when glue is enabled, and vice versa");
+    }
+    let glue_args = cli.glue.then_some(cli.glue_args);
+
     let file = wat::parse_file(&cli.component)?;
 
     // Validate with wasmparser
@@ -704,7 +742,7 @@ fn main() -> Result<()> {
     }
     fs::create_dir(&cli.outdir)?;
 
-    let decomposed = ComponentDecomposed::from_component(component_rc, checksum, cli.glue)?;
+    let decomposed = ComponentDecomposed::from_component(component_rc, checksum, glue_args)?;
     decomposed.dump_to_files(cli.wat, &cli.outdir, cli.merge)?;
     Ok(())
 }

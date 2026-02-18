@@ -65,6 +65,9 @@ unsafe extern "C" {
         new_size: u32,
     ) -> u32;
 
+    /// A dispatch method that calls the appropriate memory write for the given export's lowering.
+    fn dispatch_memory_write(export_index: u32, offset: u32, bytes_ptr: *const u8, num_bytes: u32);
+
     /// A dispatch method that calls the appropriate core function post-lowering function for the given export.
     ///
     /// The glue logic already has the signature so we don't need to pass them, just the pointer to the encoded
