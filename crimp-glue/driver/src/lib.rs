@@ -48,7 +48,7 @@ macro_rules! access (
 // Import helpers from the glue code
 // ===================================================================================
 #[cfg(feature = "glue")]
-#[link(wasm_import_module = "crimp-glue")]
+#[link(wasm_import_module = "crimp_glue")]
 unsafe extern "C" {
     /// Get the checksum of the currently instantiated component/module being driven.
     ///
@@ -260,17 +260,31 @@ unsafe fn replay_wasm_call(export_index: ExportIndex) {
     assert!(realloc_return_stack.is_empty());
 }
 
-/// Lowering logic for import calls from Wasm to Host
+// ===================================================================================
+// Exported methods for glue modules to call
+// ===================================================================================
+/// Trace following for lowering logic for import calls from Wasm to Host
+///
+/// The glue logic already has the signature so we don't need to pass them, just the pointer to the encoded
+/// recorded return values is sufficient. `num_args` is only passed now for a simple assertion.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn replay_host_call() {
+pub unsafe extern "C" fn replay_host_call() -> *mut u8 {
     //while let Some(event_res) = access!(REPLAYER).next() {
     //    let event = event_res.unwrap();
     //}
+    std::ptr::null_mut()
 }
 
-// ===================================================================================
-// The main entrypoint for the replay driver, intended to be called from the Wasm engine
-// ===================================================================================
+/// Trace following for builtin calls from Wasm, similar to [`replay_host_call`]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn replay_builtin_call() -> *mut u8 {
+    //while let Some(event_res) = access!(REPLAYER).next() {
+    //    let event = event_res.unwrap();
+    //}
+    std::ptr::null_mut()
+}
+
+/// The main entrypoint for the replay driver, intended to be called from the Wasm engine
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn run_replay() {
     env_logger::init();

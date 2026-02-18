@@ -198,14 +198,19 @@ impl<'a> LinkingMetadata<'a> {
             populated[**idx as usize] = true;
             match import_kind {
                 ImportKind::Builtin => {
-                    let idx = WirmImportsID(**idx);
+                    let wirm_idx = WirmImportsID(**idx);
                     // Engine will stub with the replay result
                     // Just provide a nice readable name
                     module.imports.set_import_name(
                         "crimp-replay".into(),
-                        module.imports.get(idx).name.to_string(),
-                        idx,
+                        module.imports.get(wirm_idx).name.to_string(),
+                        wirm_idx,
                     );
+                    import_adapters.push(ImportAdapterCrimpData {
+                        target: *idx,
+                        memory: None,
+                        realloc: None,
+                    });
                 }
                 ImportKind::TrueImport(opts) => {
                     let wirm_idx = WirmImportsID(**idx);

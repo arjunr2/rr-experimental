@@ -1,6 +1,8 @@
 use clap::Args;
 use decomposer::wirm::Module;
 
+const GLUE_MODULE_NAME: &str = "crimp_glue";
+const DRIVER_MODULE_NAME: &str = "crimp_driver";
 #[derive(Debug, Default)]
 pub struct DriverGlueModules<'a> {
     pub driver: Module<'a>,
@@ -28,7 +30,7 @@ pub struct GlueArgs {
 /// Builder for glue modules
 #[derive(Debug)]
 pub struct GlueBuilder<'a> {
-    pub module: Module<'a>,
+    module: Module<'a>,
 }
 
 impl<'a> GlueBuilder<'a> {
