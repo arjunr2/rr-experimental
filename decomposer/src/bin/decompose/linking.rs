@@ -1,12 +1,14 @@
-use anyhow::Result;
+use anyhow::{Error, Result, anyhow, bail};
 use std::collections::HashMap;
 use std::ops::Deref;
 
+use decomposer::wasmparser::TypeRef;
 use decomposer::wirm::Module;
-use decomposer::wirm::ir::id::ImportsID as WirmImportsID;
+use decomposer::wirm::ir::id::{ImportsID as WirmImportsID, TypeID as WirmTypeID};
+use decomposer::wirm::ir::module::module_types::Types;
 use serde::Serialize;
 
-use crate::glue::GlueBuilder;
+use crate::glue::{GLUE_MODULE_NAME, GlueBuilder};
 
 /// Unified naming of instances from IDs
 pub fn module_name_from_ids(module_id: ModuleID, instance_id: ModuleInstanceID) -> String {
@@ -158,6 +160,8 @@ struct ImportAdapterCrimpData {
     memory: Option<ModuleInstanceExport>,
     /// The realloc to use for adapter
     realloc: Option<ModuleInstanceExport>,
+    /// Whether this import is a builtin
+    is_builtin: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -202,7 +206,7 @@ impl<'a> LinkingMetadata<'a> {
                     // Engine will stub with the replay result
                     // Just provide a nice readable name
                     module.imports.set_import_name(
-                        "crimp-replay".into(),
+                        "crimp_replay".into(),
                         module.imports.get(wirm_idx).name.to_string(),
                         wirm_idx,
                     );
@@ -210,6 +214,7 @@ impl<'a> LinkingMetadata<'a> {
                         target: *idx,
                         memory: None,
                         realloc: None,
+                        is_builtin: true,
                     });
                 }
                 ImportKind::TrueImport(opts) => {
@@ -217,22 +222,26 @@ impl<'a> LinkingMetadata<'a> {
                     // Engine will stub with the replay result
                     // Just provide a nice readable name
                     module.imports.set_import_name(
-                        "crimp-replay".into(),
+                        "crimp_replay".into(),
                         module.imports.get(wirm_idx).name.to_string(),
                         wirm_idx,
                     );
+                    let (mut memory, mut realloc) = (None, None);
                     if let Some(opts) = opts {
                         assert!(
                             opts.post_return.is_none(),
                             "Post return should never be present for module imports"
                         );
-                        // When memory and realloc are always set together, if present
-                        import_adapters.push(ImportAdapterCrimpData {
-                            target: *idx,
-                            memory: opts.memory.clone(),
-                            realloc: opts.realloc.clone(),
-                        });
-                    }
+                        memory = opts.memory.clone();
+                        realloc = opts.realloc.clone();
+                    };
+                    // When memory and realloc are always set together, if present
+                    import_adapters.push(ImportAdapterCrimpData {
+                        target: *idx,
+                        memory,
+                        realloc,
+                        is_builtin: false,
+                    });
                 }
                 ImportKind::Rename { package, member } => {
                     module.imports.set_import_name(
@@ -258,7 +267,56 @@ impl<'a> LinkingMetadata<'a> {
         instance_id: ModuleInstanceID,
         glue: &mut GlueBuilder<'a>,
     ) -> Result<Module<'a>> {
-        let (module, import_adapters) = self.construct_adapted_module(instance_id);
+        let (mut module, import_adapters) = self.construct_adapted_module(instance_id);
+        let instance_name = module_name_from_ids(self.module_id(instance_id), instance_id);
+
+        // For each import adapter (TrueImport/Builtin), rename from "crimp-replay" to "crimp_glue"
+        // with a namespaced name, and add a corresponding replay stub to the glue module.
+        for adapter in &import_adapters {
+            let wirm_idx = WirmImportsID(*adapter.target);
+
+            // Extract data from the import before mutating
+            let import = module.imports.get(wirm_idx);
+            let original_name = import.name.to_string();
+            let type_idx = match import.ty {
+                TypeRef::Func(u) => u,
+                _ => bail!(
+                    "Expected function import at index {:?}, got {:?}",
+                    adapter.target,
+                    import.ty
+                ),
+            };
+
+            // Rename this import to point to the glue module
+            let namespaced_name = format!("{}:{}", instance_name, original_name);
+            module.imports.set_import_name(
+                GLUE_MODULE_NAME.into(),
+                namespaced_name.clone(),
+                wirm_idx,
+            );
+
+            // Get the signature of the import
+            let func_type = module
+                .types
+                .get(WirmTypeID(type_idx))
+                .ok_or_else(|| anyhow!("Type {} not found in module", type_idx))?;
+            let (params, results) = match func_type {
+                Types::FuncType {
+                    params, results, ..
+                } => (params.to_vec(), results.to_vec()),
+                _ => bail!("Expected FuncType at index {}", type_idx),
+            };
+
+            glue.add_replay_stub(&namespaced_name, &params, &results, adapter.is_builtin);
+        }
+
+        // Register component export functions for dispatch from the driver
+        if let Some(export_funcs) = self.export_funcs.get(&instance_id) {
+            for export_func in export_funcs {
+                glue.register_export(export_func, instance_id, self)?;
+            }
+        }
+
         Ok(module)
     }
 
@@ -282,7 +340,7 @@ impl<'a> LinkingMetadata<'a> {
                 .iter()
                 .collect(),
         };
-        let section = postcard::to_stdvec(&data).map_err(Into::<anyhow::Error>::into)?;
+        let section = postcard::to_stdvec(&data).map_err(Into::<Error>::into)?;
         Ok((module, section))
     }
 }

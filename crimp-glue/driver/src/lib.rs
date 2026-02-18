@@ -272,6 +272,7 @@ pub unsafe extern "C" fn replay_host_call() -> *mut u8 {
     //while let Some(event_res) = access!(REPLAYER).next() {
     //    let event = event_res.unwrap();
     //}
+    panic!("Host call replay is not yet implemented in the Wasm replay driver!");
     std::ptr::null_mut()
 }
 
@@ -281,6 +282,7 @@ pub unsafe extern "C" fn replay_builtin_call() -> *mut u8 {
     //while let Some(event_res) = access!(REPLAYER).next() {
     //    let event = event_res.unwrap();
     //}
+    panic!("Builtin call is not yet implemented in the Wasm replay driver!");
     std::ptr::null_mut()
 }
 

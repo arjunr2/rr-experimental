@@ -1,8 +1,29 @@
-use clap::Args;
-use decomposer::wirm::Module;
+use escargot::format::Message;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
-const GLUE_MODULE_NAME: &str = "crimp_glue";
-const DRIVER_MODULE_NAME: &str = "crimp_driver";
+use anyhow::{Result, anyhow};
+use clap::Args;
+use decomposer::wasmparser::MemArg;
+use decomposer::wasmparser::MemoryType;
+use decomposer::wirm::Module;
+use decomposer::wirm::ir::function::FunctionBuilder;
+use decomposer::wirm::ir::id::{FunctionID, LocalID, MemoryID, TypeID};
+use decomposer::wirm::ir::module::module_types::Types;
+use decomposer::wirm::ir::types::BlockType;
+use decomposer::wirm::module_builder::AddLocal;
+use decomposer::wirm::opcode::Opcode;
+
+use crate::linking::{
+    Checksum, ExportFuncMetadata, LinkingMetadata, ModuleInstanceExport, ModuleInstanceID,
+    module_name_from_ids,
+};
+
+pub const GLUE_MODULE_NAME: &str = "crimp_glue";
+pub const DRIVER_MODULE_NAME: &str = "crimp_driver";
+
+use decomposer::wirm::DataType;
+
 #[derive(Debug, Default)]
 pub struct DriverGlueModules<'a> {
     pub driver: Module<'a>,
@@ -10,12 +31,69 @@ pub struct DriverGlueModules<'a> {
 }
 
 impl<'a> DriverGlueModules<'a> {
-    /// Construct from trace path to build the driver and a glue builder
-    pub fn from_path_and_builder(trace_path: String, builder: GlueBuilder<'a>) -> Self {
-        Self {
-            driver: Module::default(),
-            glue: builder.finish(),
+    /// Build the crimp-glue-driver crate targeting wasm32-wasip1 with the given trace path,
+    /// parse the resulting .wasm into a Module, and finalize the glue module from the builder.
+    pub fn from_path_and_builder(trace_path: PathBuf, builder: GlueBuilder<'a>) -> Result<Self> {
+        let driver_manifest = PathBuf::from(env!("CRIMP_DRIVER_MANIFEST"));
+        let trace_path = trace_path
+            .canonicalize()
+            .map_err(|e| anyhow!("Failed to canonicalize trace path: {}", e))?;
+
+        log::info!(
+            "Building crimp-glue-driver with TRACE_FILEPATH={:?}, manifest={:?}",
+            trace_path,
+            driver_manifest
+        );
+
+        let messages = escargot::CargoBuild::new()
+            .manifest_path(&driver_manifest)
+            .target("wasm32-wasip1")
+            .env("TRACE_FILEPATH", &trace_path)
+            .release()
+            .exec()
+            .map_err(|e| anyhow!("Failed to run cargo build: {}", e))?;
+
+        let mut wasm_path: Option<PathBuf> = None;
+        for msg_result in messages {
+            let msg =
+                msg_result.map_err(|e| anyhow!("Error reading cargo build message: {}", e))?;
+            let decoded = msg
+                .decode()
+                .map_err(|e| anyhow!("Error decoding cargo build message: {}", e))?;
+
+            if let Message::CompilerArtifact(artifact) = decoded {
+                if artifact
+                    .target
+                    .crate_types
+                    .iter()
+                    .any(|ct| ct.as_ref() == "cdylib")
+                {
+                    for filename in &artifact.filenames {
+                        if filename.extension().is_some_and(|ext| ext == "wasm") {
+                            wasm_path = Some(filename.to_path_buf());
+                            break;
+                        }
+                    }
+                }
+            }
         }
+
+        let wasm_path = wasm_path
+            .ok_or_else(|| anyhow!("Failed to find .wasm artifact from crimp-glue-driver build"))?;
+
+        log::info!("Driver built at: {:?}", wasm_path);
+        let bytes = std::fs::read(&wasm_path)?;
+        // Leak the bytes so the parsed Module can borrow with 'static lifetime.
+        // This is acceptable since the decomposer is a short-lived CLI tool.
+        let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+        let mut driver = Module::parse(bytes, true, false)
+            .map_err(|e| anyhow!("Failed to parse driver wasm: {:?}", e))?;
+        driver.module_name = Some(DRIVER_MODULE_NAME.to_string());
+
+        Ok(Self {
+            driver,
+            glue: builder.finish(),
+        })
     }
 }
 
@@ -24,22 +102,578 @@ pub struct GlueArgs {
     /// Only valid with `glue` is true - the path to the trace file to be embedded in the replay driver
     /// module for use during replay
     #[arg(short = 'p', long = "trace-path")]
-    pub trace_path: Option<String>,
+    pub trace_path: Option<PathBuf>,
 }
 
-/// Builder for glue modules
-#[derive(Debug)]
+/// Builder for the synthetic glue Wasm module.
+///
+/// The glue module bridges decomposed component modules with the replay driver:
+/// - Exports stub functions for component "crimp-replay" imports (calling driver's replay functions)
+/// - Exports the "crimp_glue" dispatch interface for the driver (checksum, realloc, memory_write, core_func)
 pub struct GlueBuilder<'a> {
     module: Module<'a>,
+    checksum: Checksum,
+
+    // Driver imports
+    driver_memory: MemoryID,
+    replay_host_call: FunctionID,
+    replay_builtin_call: FunctionID,
+
+    // Dedup caches for component imports
+    imported_memories: HashMap<(ModuleInstanceID, String), MemoryID>,
+    imported_funcs: HashMap<(ModuleInstanceID, String), (FunctionID, TypeID)>,
+
+    // Dispatch tables (populated per-export, consumed in finish)
+    // (record_id, func/mem in glue module)
+    realloc_dispatch: Vec<(u32, FunctionID)>,
+    memory_write_dispatch: Vec<(u32, MemoryID)>,
+    core_func_dispatch: Vec<(u32, FunctionID, TypeID)>,
 }
 
 impl<'a> GlueBuilder<'a> {
-    pub fn new() -> Self {
+    pub fn new(checksum: Checksum) -> Self {
+        let mut module = Module::default();
+        module.module_name = Some(GLUE_MODULE_NAME.to_string());
+
+        // Import driver memory
+        let (driver_memory, _) = module.add_import_memory(
+            DRIVER_MODULE_NAME.to_string(),
+            "memory".to_string(),
+            MemoryType {
+                initial: 0,
+                maximum: None,
+                shared: false,
+                memory64: false,
+                page_size_log2: None,
+            },
+        );
+
+        // Import replay functions from driver: () -> i32
+        let replay_type = module.types.add_func_type(&[], &[DataType::I32]);
+        let (replay_host_call, _) = module.add_import_func(
+            DRIVER_MODULE_NAME.to_string(),
+            "replay_host_call".to_string(),
+            replay_type,
+        );
+        let (replay_builtin_call, _) = module.add_import_func(
+            DRIVER_MODULE_NAME.to_string(),
+            "replay_builtin_call".to_string(),
+            replay_type,
+        );
+
         Self {
-            module: Module::default(),
+            module,
+            checksum,
+            driver_memory,
+            replay_host_call,
+            replay_builtin_call,
+            imported_memories: HashMap::new(),
+            imported_funcs: HashMap::new(),
+            realloc_dispatch: Vec::new(),
+            memory_write_dispatch: Vec::new(),
+            core_func_dispatch: Vec::new(),
         }
     }
-    pub fn finish(self) -> Module<'a> {
+
+    // ========================
+    // ==== Import Helpers ====
+    // ========================
+
+    /// Import a component memory if not already imported. Returns the MemoryID in the glue module.
+    fn ensure_memory_imported(
+        &mut self,
+        export: &ModuleInstanceExport,
+        instance_name: &str,
+    ) -> MemoryID {
+        let key = (export.mid, export.name.clone());
+        if let Some(&mem_id) = self.imported_memories.get(&key) {
+            return mem_id;
+        }
+        let (mem_id, _) = self.module.add_import_memory(
+            instance_name.to_string(),
+            export.name.clone(),
+            MemoryType {
+                initial: 0,
+                maximum: None,
+                shared: false,
+                memory64: false,
+                page_size_log2: None,
+            },
+        );
+        self.imported_memories.insert(key, mem_id);
+        mem_id
+    }
+
+    /// Import a component function if not already imported. Returns (FunctionID, TypeID) in the glue module.
+    fn ensure_func_imported(
+        &mut self,
+        instance_id: ModuleInstanceID,
+        func_name: &str,
+        instance_name: &str,
+        params: &[DataType],
+        results: &[DataType],
+    ) -> (FunctionID, TypeID) {
+        let key = (instance_id, func_name.to_string());
+        if let Some(&ids) = self.imported_funcs.get(&key) {
+            return ids;
+        }
+        let type_id = self.module.types.add_func_type(params, results);
+        let (func_id, _) =
+            self.module
+                .add_import_func(instance_name.to_string(), func_name.to_string(), type_id);
+        self.imported_funcs.insert(key, (func_id, type_id));
+        (func_id, type_id)
+    }
+
+    // ==============================
+    // ==== Replay Stub Builders ====
+    // ==============================
+
+    /// Add a replay stub function that the component module will call for a replaced import.
+    ///
+    /// The stub calls either `replay_host_call` or `replay_builtin_call` on the driver,
+    /// then reads return values from driver memory and returns them.
+    pub fn add_replay_stub(
+        &mut self,
+        export_name: &str,
+        params: &[DataType],
+        results: &[DataType],
+        is_builtin: bool,
+    ) {
+        let mut fb = FunctionBuilder::new(params, results);
+        fb.set_name(format!("stub_{}", export_name));
+
+        let replay_func = if is_builtin {
+            self.replay_builtin_call
+        } else {
+            self.replay_host_call
+        };
+
+        // Call the replay function → returns i32 pointer into driver memory
+        fb.call(replay_func);
+
+        if results.is_empty() {
+            // No return values: drop the pointer
+            fb.drop();
+        } else {
+            // Save the returned pointer to a local
+            let ptr_local = fb.add_local(DataType::I32);
+            fb.local_set(ptr_local);
+
+            // Load each result from driver memory at ptr + offset
+            let driver_mem = *self.driver_memory;
+            let mut offset: u64 = 0;
+            for result_ty in results {
+                fb.local_get(ptr_local);
+                match result_ty {
+                    DataType::I32 => {
+                        fb.i32_load(MemArg {
+                            align: 2,
+                            max_align: 2,
+                            offset,
+                            memory: driver_mem,
+                        });
+                        offset += 4;
+                    }
+                    DataType::I64 => {
+                        fb.i64_load(MemArg {
+                            align: 3,
+                            max_align: 3,
+                            offset,
+                            memory: driver_mem,
+                        });
+                        offset += 8;
+                    }
+                    DataType::F32 => {
+                        fb.f32_load(MemArg {
+                            align: 2,
+                            max_align: 2,
+                            offset,
+                            memory: driver_mem,
+                        });
+                        offset += 4;
+                    }
+                    DataType::F64 => {
+                        fb.f64_load(MemArg {
+                            align: 3,
+                            max_align: 3,
+                            offset,
+                            memory: driver_mem,
+                        });
+                        offset += 8;
+                    }
+                    _ => panic!(
+                        "Unsupported return type {:?} in replay stub for {}",
+                        result_ty, export_name
+                    ),
+                }
+            }
+        }
+
+        let func_id = fb.finish_module(&mut self.module);
         self.module
+            .exports
+            .add_export_func(export_name.to_string(), *func_id);
+    }
+
+    // ====================================
+    // ==== Export Registration (dispatch) ====
+    // ====================================
+
+    /// Register a component export function for dispatch from the driver.
+    ///
+    /// This imports the core function (and its realloc/memory if present) into the glue module
+    /// and populates the dispatch tables used by the `dispatch_*` functions.
+    pub fn register_export(
+        &mut self,
+        export_func: &ExportFuncMetadata,
+        instance_id: ModuleInstanceID,
+        linking: &LinkingMetadata,
+    ) -> Result<()> {
+        let module_id = linking.module_id(instance_id);
+        let instance_name = module_name_from_ids(module_id, instance_id);
+        let src_module = linking.module(instance_id);
+
+        // Look up the core function's type from the source module
+        let core_export = src_module
+            .exports
+            .get_by_name(export_func.name.clone())
+            .ok_or_else(|| {
+                anyhow!(
+                    "Export '{}' not found in module for instance {:?}",
+                    export_func.name,
+                    instance_id
+                )
+            })?;
+        let core_func_type_id = src_module
+            .functions
+            .get_type_id(FunctionID(core_export.index));
+        let (params, results) =
+            get_func_type_params_results(src_module.types.get(core_func_type_id).unwrap());
+
+        // Import the core function into the glue module
+        let (glue_func_id, glue_type_id) = self.ensure_func_imported(
+            instance_id,
+            &export_func.name,
+            &instance_name,
+            &params,
+            &results,
+        );
+        self.core_func_dispatch
+            .push((export_func.record_id.0, glue_func_id, glue_type_id));
+
+        // Import realloc if present in canonical options
+        if let Some(opts) = &export_func.opts {
+            if let Some(realloc) = &opts.realloc {
+                let realloc_instance_name =
+                    module_name_from_ids(linking.module_id(realloc.mid), realloc.mid);
+                let (realloc_func_id, _) = self.ensure_func_imported(
+                    realloc.mid,
+                    &realloc.name,
+                    &realloc_instance_name,
+                    &[DataType::I32, DataType::I32, DataType::I32, DataType::I32],
+                    &[DataType::I32],
+                );
+                self.realloc_dispatch
+                    .push((export_func.record_id.0, realloc_func_id));
+            }
+            if let Some(memory) = &opts.memory {
+                let memory_instance_name =
+                    module_name_from_ids(linking.module_id(memory.mid), memory.mid);
+                let mem_id = self.ensure_memory_imported(memory, &memory_instance_name);
+                self.memory_write_dispatch
+                    .push((export_func.record_id.0, mem_id));
+            }
+        }
+
+        Ok(())
+    }
+
+    // ====================================
+    // ==== Dispatch Function Builders ====
+    // ====================================
+
+    /// Build `get_sha256_checksum(checksum_buf: i32)`.
+    /// Stores the embedded 32-byte checksum into driver memory at the given pointer.
+    fn build_get_sha256_checksum(&mut self) {
+        let mut fb = FunctionBuilder::new(&[DataType::I32], &[]);
+        fb.set_name("get_sha256_checksum".to_string());
+        let buf_ptr = LocalID(0);
+        let driver_mem = *self.driver_memory;
+
+        // Write checksum as 4 x i64 stores
+        for i in 0..4 {
+            let byte_offset = i * 8;
+            let qword = u64::from_le_bytes([
+                self.checksum[byte_offset],
+                self.checksum[byte_offset + 1],
+                self.checksum[byte_offset + 2],
+                self.checksum[byte_offset + 3],
+                self.checksum[byte_offset + 4],
+                self.checksum[byte_offset + 5],
+                self.checksum[byte_offset + 6],
+                self.checksum[byte_offset + 7],
+            ]);
+            fb.local_get(buf_ptr);
+            fb.i64_const(qword as i64);
+            fb.i64_store(MemArg {
+                align: 3,
+                max_align: 3,
+                offset: byte_offset as u64,
+                memory: driver_mem,
+            });
+        }
+
+        let func_id = fb.finish_module(&mut self.module);
+        self.module
+            .exports
+            .add_export_func("get_sha256_checksum".to_string(), *func_id);
+    }
+
+    /// Build `dispatch_realloc(export_index, old_addr, old_size, old_align, new_size) -> i32`.
+    /// Dispatches to the appropriate imported realloc based on export_index.
+    fn build_dispatch_realloc(&mut self) {
+        let mut fb = FunctionBuilder::new(
+            &[
+                DataType::I32,
+                DataType::I32,
+                DataType::I32,
+                DataType::I32,
+                DataType::I32,
+            ],
+            &[DataType::I32],
+        );
+        fb.set_name("dispatch_realloc".to_string());
+        let export_index = LocalID(0);
+        let old_addr = LocalID(1);
+        let old_size = LocalID(2);
+        let old_align = LocalID(3);
+        let new_size = LocalID(4);
+
+        let entries = self.realloc_dispatch.clone();
+        for (record_id, realloc_func_id) in &entries {
+            // if (export_index == record_id) { call realloc; return }
+            fb.local_get(export_index);
+            fb.i32_const(*record_id as i32);
+            fb.i32_eq();
+            fb.if_stmt(BlockType::Type(DataType::I32));
+            {
+                fb.local_get(old_addr);
+                fb.local_get(old_size);
+                fb.local_get(old_align);
+                fb.local_get(new_size);
+                fb.call(*realloc_func_id);
+                fb.return_stmt();
+            }
+            fb.else_stmt();
+        }
+
+        // Default: unreachable
+        fb.unreachable();
+
+        // Close all if/else blocks
+        for _ in &entries {
+            fb.end();
+        }
+
+        let func_id = fb.finish_module(&mut self.module);
+        self.module
+            .exports
+            .add_export_func("dispatch_realloc".to_string(), *func_id);
+    }
+
+    /// Build `dispatch_memory_write(export_index, offset, bytes_ptr, num_bytes)`.
+    /// Copies bytes from driver memory to the appropriate component memory.
+    fn build_dispatch_memory_write(&mut self) {
+        let mut fb = FunctionBuilder::new(
+            &[DataType::I32, DataType::I32, DataType::I32, DataType::I32],
+            &[],
+        );
+        fb.set_name("dispatch_memory_write".to_string());
+        let export_index = LocalID(0);
+        let offset = LocalID(1);
+        let bytes_ptr = LocalID(2);
+        let num_bytes = LocalID(3);
+
+        let driver_mem = *self.driver_memory;
+        let entries = &self.memory_write_dispatch;
+        for (record_id, target_mem_id) in entries.iter() {
+            fb.local_get(export_index);
+            fb.i32_const(*record_id as i32);
+            fb.i32_eq();
+            fb.if_stmt(BlockType::Empty);
+            {
+                // memory.copy(dst=component_mem, src=driver_mem)
+                // stack: [dst_offset, src_offset, len]
+                fb.local_get(offset);
+                fb.local_get(bytes_ptr);
+                fb.local_get(num_bytes);
+                fb.memory_copy(**target_mem_id, driver_mem);
+                fb.return_stmt();
+            }
+            fb.else_stmt();
+        }
+
+        fb.unreachable();
+
+        for _ in entries.iter() {
+            fb.end();
+        }
+
+        let func_id = fb.finish_module(&mut self.module);
+        self.module
+            .exports
+            .add_export_func("dispatch_memory_write".to_string(), *func_id);
+    }
+
+    /// Build `dispatch_core_func(export_index, args_ptr, num_args) -> i64`.
+    /// Reads args from driver memory, calls the appropriate component function, returns result as i64.
+    fn build_dispatch_core_func(&mut self) {
+        let mut fb = FunctionBuilder::new(
+            &[DataType::I32, DataType::I32, DataType::I32],
+            &[DataType::I64],
+        );
+        fb.set_name("dispatch_core_func".to_string());
+        let export_index = LocalID(0);
+        let args_ptr = LocalID(1);
+        let _num_args = LocalID(2);
+        let driver_mem = *self.driver_memory;
+
+        let entries = self.core_func_dispatch.clone();
+        for (record_id, core_func_id, type_id) in &entries {
+            let func_type = self.module.types.get(*type_id).unwrap().clone();
+            let (params, results) = get_func_type_params_results(&func_type);
+
+            fb.local_get(export_index);
+            fb.i32_const(*record_id as i32);
+            fb.i32_eq();
+            fb.if_stmt(BlockType::Type(DataType::I64));
+            {
+                // Load each argument from driver memory
+                let mut arg_offset: u64 = 0;
+                for param_ty in &params {
+                    fb.local_get(args_ptr);
+                    match param_ty {
+                        DataType::I32 => {
+                            fb.i32_load(MemArg {
+                                align: 2,
+                                max_align: 2,
+                                offset: arg_offset,
+                                memory: driver_mem,
+                            });
+                            arg_offset += 4;
+                        }
+                        DataType::I64 => {
+                            fb.i64_load(MemArg {
+                                align: 3,
+                                max_align: 3,
+                                offset: arg_offset,
+                                memory: driver_mem,
+                            });
+                            arg_offset += 8;
+                        }
+                        DataType::F32 => {
+                            fb.f32_load(MemArg {
+                                align: 2,
+                                max_align: 2,
+                                offset: arg_offset,
+                                memory: driver_mem,
+                            });
+                            arg_offset += 4;
+                        }
+                        DataType::F64 => {
+                            fb.f64_load(MemArg {
+                                align: 3,
+                                max_align: 3,
+                                offset: arg_offset,
+                                memory: driver_mem,
+                            });
+                            arg_offset += 8;
+                        }
+                        _ => panic!(
+                            "Unsupported param type {:?} in dispatch_core_func",
+                            param_ty
+                        ),
+                    }
+                }
+
+                // Call the core function
+                fb.call(*core_func_id);
+
+                // Convert result to i64
+                if results.is_empty() {
+                    fb.i64_const(0);
+                } else if results.len() == 1 {
+                    match results[0] {
+                        DataType::I32 => {
+                            fb.i64_extend_i32u();
+                        }
+                        DataType::I64 => {
+                            // already i64
+                        }
+                        DataType::F32 => {
+                            fb.i32_reinterpret_f32();
+                            fb.i64_extend_i32u();
+                        }
+                        DataType::F64 => {
+                            fb.i64_reinterpret_f64();
+                        }
+                        _ => panic!(
+                            "Unsupported result type {:?} in dispatch_core_func",
+                            results[0]
+                        ),
+                    }
+                } else {
+                    panic!(
+                        "Multi-value returns ({} values) not yet supported in dispatch_core_func",
+                        results.len()
+                    );
+                }
+
+                fb.return_stmt();
+            }
+            fb.else_stmt();
+        }
+
+        // Default: unreachable
+        fb.unreachable();
+
+        for _ in &entries {
+            fb.end();
+        }
+
+        let func_id = fb.finish_module(&mut self.module);
+        self.module
+            .exports
+            .add_export_func("dispatch_core_func".to_string(), *func_id);
+    }
+
+    // ====================
+    // ==== Finish ====
+    // ====================
+
+    /// Finalize the glue module: build all dispatch functions and return the module.
+    pub fn finish(mut self) -> Module<'a> {
+        assert!(
+            self.imported_memories.len() <= 1,
+            "Expected at most one component memory, but found {}: {:?}",
+            self.imported_memories.len(),
+            self.imported_memories.keys().collect::<Vec<_>>()
+        );
+        self.build_get_sha256_checksum();
+        self.build_dispatch_realloc();
+        self.build_dispatch_memory_write();
+        self.build_dispatch_core_func();
+        self.module
+    }
+}
+
+/// Extract params and results from a wirm Types::FuncType.
+fn get_func_type_params_results(ty: &Types) -> (Vec<DataType>, Vec<DataType>) {
+    match ty {
+        Types::FuncType {
+            params, results, ..
+        } => (params.to_vec(), results.to_vec()),
+        _ => panic!("Expected FuncType, got {:?}", ty),
     }
 }

@@ -627,7 +627,7 @@ impl<'a> ComponentDecomposed<'a> {
 
         let (modules, glue) = if let Some(args) = glue_args {
             // Generate glue and driver bindings
-            let mut builder = GlueBuilder::new();
+            let mut builder = GlueBuilder::new(linking.checksum);
             let crimp_modules = linking
                 .instantiations
                 .keys()
@@ -638,7 +638,7 @@ impl<'a> ComponentDecomposed<'a> {
                 Some(DriverGlueModules::from_path_and_builder(
                     args.trace_path.unwrap(),
                     builder,
-                )),
+                )?),
             )
         } else {
             // Serialize into custom section
@@ -721,7 +721,6 @@ impl<'a> ComponentDecomposed<'a> {
 fn main() -> Result<()> {
     env_logger::init();
     let cli = CLI::parse();
-    println!("CLI: {:?}", cli);
     if cli.glue ^ cli.glue_args.trace_path.is_some() {
         bail!("Glue args must be provided when glue is enabled, and vice versa");
     }
