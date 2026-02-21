@@ -61,6 +61,11 @@ impl<'a> DriverGlueModules<'a> {
                 .decode()
                 .map_err(|e| anyhow!("Error decoding cargo build message: {}", e))?;
 
+            if let Message::CompilerMessage(msg) = &decoded {
+                if let Some(rendered) = &msg.message.rendered {
+                    log::warn!("{}", rendered);
+                }
+            }
             if let Message::CompilerArtifact(artifact) = decoded {
                 if artifact
                     .target
@@ -118,10 +123,14 @@ pub struct GlueBuilder<'a> {
     driver_memory: MemoryID,
     replay_host_call: FunctionID,
     replay_builtin_call: FunctionID,
+    allocate_args_results_buffer: FunctionID,
 
     // Dedup caches for component imports
     imported_memories: HashMap<(ModuleInstanceID, String), MemoryID>,
     imported_funcs: HashMap<(ModuleInstanceID, String), (FunctionID, TypeID)>,
+
+    // Global import counter (unique across all modules)
+    next_import_id: u32,
 
     // Dispatch tables (populated per-export, consumed in finish)
     // (record_id, func/mem in glue module)
@@ -148,17 +157,35 @@ impl<'a> GlueBuilder<'a> {
             },
         );
 
-        // Import replay functions from driver: () -> i32
-        let replay_type = module.types.add_func_type(&[], &[DataType::I32]);
+        // Import replay functions from driver
+        // replay_host_call: (import_index, params_bytes_len, params_sizes_len) -> i32
+        let replay_host_call_type = module.types.add_func_type(
+            &[DataType::I32, DataType::I32, DataType::I32],
+            &[DataType::I32],
+        );
         let (replay_host_call, _) = module.add_import_func(
             DRIVER_MODULE_NAME.to_string(),
             "replay_host_call".to_string(),
-            replay_type,
+            replay_host_call_type,
         );
+        // replay_builtin_call: (i32) -> i32
+        let replay_builtin_type = module
+            .types
+            .add_func_type(&[DataType::I32], &[DataType::I32]);
         let (replay_builtin_call, _) = module.add_import_func(
             DRIVER_MODULE_NAME.to_string(),
             "replay_builtin_call".to_string(),
-            replay_type,
+            replay_builtin_type,
+        );
+
+        // Import allocate_args_results_buffer from driver: (i32, i32) -> i32 (returns pointer to RRFuncArgValsFFI)
+        let allocate_args_results_buffer_type = module
+            .types
+            .add_func_type(&[DataType::I32, DataType::I32], &[DataType::I32]);
+        let (allocate_args_results_buffer, _) = module.add_import_func(
+            DRIVER_MODULE_NAME.to_string(),
+            "allocate_args_results_buffer".to_string(),
+            allocate_args_results_buffer_type,
         );
 
         Self {
@@ -167,6 +194,8 @@ impl<'a> GlueBuilder<'a> {
             driver_memory,
             replay_host_call,
             replay_builtin_call,
+            allocate_args_results_buffer,
+            next_import_id: 0,
             imported_memories: HashMap::new(),
             imported_funcs: HashMap::new(),
             realloc_dispatch: Vec::new(),
@@ -231,8 +260,10 @@ impl<'a> GlueBuilder<'a> {
 
     /// Add a replay stub function that the component module will call for a replaced import.
     ///
-    /// The stub calls either `replay_host_call` or `replay_builtin_call` on the driver,
-    /// then reads return values from driver memory and returns them.
+    /// The stub:
+    /// 1. Allocates an FFI buffer via `allocate_args_results_buffer` and stores the params into it
+    /// 2. Calls `replay_host_call` or `replay_builtin_call` on the driver
+    /// 3. Reads return values from the returned pointer in driver memory
     pub fn add_replay_stub(
         &mut self,
         export_name: &str,
@@ -240,8 +271,11 @@ impl<'a> GlueBuilder<'a> {
         results: &[DataType],
         is_builtin: bool,
     ) {
+        let import_id = self.next_import_id;
+        self.next_import_id += 1;
         let mut fb = FunctionBuilder::new(params, results);
         fb.set_name(format!("stub_{}", export_name));
+        let driver_mem = *self.driver_memory;
 
         let replay_func = if is_builtin {
             self.replay_builtin_call
@@ -249,22 +283,126 @@ impl<'a> GlueBuilder<'a> {
             self.replay_host_call
         };
 
-        // Call the replay function → returns i32 pointer into driver memory
-        fb.call(replay_func);
+        // Save params to locals so we can store them to memory
+        let param_locals: Vec<(LocalID, DataType)> = params
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| (LocalID(i as u32), *ty))
+            .collect();
+
+        let ffi_ptr = fb.add_local(DataType::I32);
+        let bytes_ptr = fb.add_local(DataType::I32);
+        let sizes_ptr = fb.add_local(DataType::I32);
+
+        // Allocate FFI buffer for params
+        let total_param_bytes: u32 = params.iter().map(|ty| data_type_byte_size(ty)).sum();
+        let num_params: u32 = params.len() as u32;
+        fb.i32_const(total_param_bytes as i32);
+        fb.i32_const(num_params as i32);
+        fb.call(self.allocate_args_results_buffer);
+        fb.local_set(ffi_ptr);
+
+        // Read bytes_ptr from FFI struct (offset 0)
+        fb.local_get(ffi_ptr);
+        fb.i32_load(MemArg {
+            align: 2,
+            max_align: 2,
+            offset: 0,
+            memory: driver_mem,
+        });
+        fb.local_set(bytes_ptr);
+
+        // Read sizes_ptr from FFI struct (offset 4)
+        fb.local_get(ffi_ptr);
+        fb.i32_load(MemArg {
+            align: 2,
+            max_align: 2,
+            offset: 4,
+            memory: driver_mem,
+        });
+        fb.local_set(sizes_ptr);
+
+        // Store each param into bytes_ptr (driver memory)
+        let mut byte_offset: u64 = 0;
+        for (local_id, param_ty) in &param_locals {
+            fb.local_get(bytes_ptr);
+            fb.local_get(*local_id);
+            let size = data_type_byte_size(param_ty);
+            match param_ty {
+                DataType::I32 => {
+                    fb.i32_store(MemArg {
+                        align: 2,
+                        max_align: 2,
+                        offset: byte_offset,
+                        memory: driver_mem,
+                    });
+                }
+                DataType::I64 => {
+                    fb.i64_store(MemArg {
+                        align: 3,
+                        max_align: 3,
+                        offset: byte_offset,
+                        memory: driver_mem,
+                    });
+                }
+                DataType::F32 => {
+                    fb.f32_store(MemArg {
+                        align: 2,
+                        max_align: 2,
+                        offset: byte_offset,
+                        memory: driver_mem,
+                    });
+                }
+                DataType::F64 => {
+                    fb.f64_store(MemArg {
+                        align: 3,
+                        max_align: 3,
+                        offset: byte_offset,
+                        memory: driver_mem,
+                    });
+                }
+                _ => panic!(
+                    "Unsupported param type {:?} in replay stub for {}",
+                    param_ty, export_name
+                ),
+            }
+            byte_offset += size as u64;
+        }
+
+        // Store size descriptors into sizes_ptr (1 byte each)
+        for (i, param_ty) in params.iter().enumerate() {
+            fb.local_get(sizes_ptr);
+            fb.i32_const(data_type_byte_size(param_ty) as i32);
+            fb.i32_store8(MemArg {
+                align: 0,
+                max_align: 0,
+                offset: i as u64,
+                memory: driver_mem,
+            });
+        }
+
+        // Call the replay function with (import_index, params_bytes_len, params_sizes_len)
+        fb.i32_const(import_id as i32);
+        if is_builtin {
+            fb.call(replay_func);
+        } else {
+            fb.i32_const(total_param_bytes as i32);
+            fb.i32_const(num_params as i32);
+            fb.call(replay_func);
+        }
 
         if results.is_empty() {
             // No return values: drop the pointer
             fb.drop();
         } else {
             // Save the returned pointer to a local
-            let ptr_local = fb.add_local(DataType::I32);
-            fb.local_set(ptr_local);
+            let ret_ptr = fb.add_local(DataType::I32);
+            fb.local_set(ret_ptr);
 
-            // Load each result from driver memory at ptr + offset
-            let driver_mem = *self.driver_memory;
+            // Load each result from driver memory at ret_ptr + offset
             let mut offset: u64 = 0;
             for result_ty in results {
-                fb.local_get(ptr_local);
+                fb.local_get(ret_ptr);
                 match result_ty {
                     DataType::I32 => {
                         fb.i32_load(MemArg {
@@ -526,30 +664,41 @@ impl<'a> GlueBuilder<'a> {
             .add_export_func("dispatch_memory_write".to_string(), *func_id);
     }
 
-    /// Build `dispatch_core_func(export_index, args_ptr, num_args) -> i64`.
-    /// Reads args from driver memory, calls the appropriate component function, returns result as i64.
+    /// Build `dispatch_core_func(export_index, args_ptr, return_bytes_len, return_sizes_len)`.
+    /// Reads args from driver memory, calls the appropriate component function,
+    /// writes results into the FFI backing buffers via `allocate_args_results_buffer`,
+    /// and writes the return lengths to the out-pointers.
     fn build_dispatch_core_func(&mut self) {
         let mut fb = FunctionBuilder::new(
-            &[DataType::I32, DataType::I32, DataType::I32],
-            &[DataType::I64],
+            &[DataType::I32, DataType::I32, DataType::I32, DataType::I32],
+            &[],
         );
         fb.set_name("dispatch_core_func".to_string());
         let export_index = LocalID(0);
         let args_ptr = LocalID(1);
-        let _num_args = LocalID(2);
+        let return_bytes_len = LocalID(2);
+        let return_sizes_len = LocalID(3);
         let driver_mem = *self.driver_memory;
+
+        // Locals for FFI struct interaction
+        let ffi_ptr = fb.add_local(DataType::I32);
+        let bytes_ptr = fb.add_local(DataType::I32);
+        let sizes_ptr = fb.add_local(DataType::I32);
 
         let entries = self.core_func_dispatch.clone();
         for (record_id, core_func_id, type_id) in &entries {
             let func_type = self.module.types.get(*type_id).unwrap().clone();
             let (params, results) = get_func_type_params_results(&func_type);
 
+            let total_bytes: u32 = results.iter().map(|r| data_type_byte_size(r)).sum();
+            let num_results: u32 = results.len() as u32;
+
             fb.local_get(export_index);
             fb.i32_const(*record_id as i32);
             fb.i32_eq();
-            fb.if_stmt(BlockType::Type(DataType::I64));
+            fb.if_stmt(BlockType::Empty);
             {
-                // Load each argument from driver memory
+                // Load each argument from args_ptr (driver memory)
                 let mut arg_offset: u64 = 0;
                 for param_ty in &params {
                     fb.local_get(args_ptr);
@@ -600,35 +749,118 @@ impl<'a> GlueBuilder<'a> {
                 // Call the core function
                 fb.call(*core_func_id);
 
-                // Convert result to i64
-                if results.is_empty() {
-                    fb.i64_const(0);
-                } else if results.len() == 1 {
-                    match results[0] {
-                        DataType::I32 => {
-                            fb.i64_extend_i32u();
-                        }
-                        DataType::I64 => {
-                            // already i64
-                        }
-                        DataType::F32 => {
-                            fb.i32_reinterpret_f32();
-                            fb.i64_extend_i32u();
-                        }
-                        DataType::F64 => {
-                            fb.i64_reinterpret_f64();
-                        }
-                        _ => panic!(
-                            "Unsupported result type {:?} in dispatch_core_func",
-                            results[0]
-                        ),
+                // Save results to locals (pop in reverse since stack is LIFO)
+                if !results.is_empty() {
+                    let result_locals: Vec<LocalID> =
+                        results.iter().map(|ty| fb.add_local(*ty)).collect();
+                    for local in result_locals.iter().rev() {
+                        fb.local_set(*local);
                     }
-                } else {
-                    panic!(
-                        "Multi-value returns ({} values) not yet supported in dispatch_core_func",
-                        results.len()
-                    );
+
+                    // Allocate the return buffer now that we have results
+                    fb.i32_const(total_bytes as i32);
+                    fb.i32_const(num_results as i32);
+                    fb.call(self.allocate_args_results_buffer);
+                    fb.local_set(ffi_ptr);
+
+                    // Read bytes_ptr from FFI struct (offset 0)
+                    fb.local_get(ffi_ptr);
+                    fb.i32_load(MemArg {
+                        align: 2,
+                        max_align: 2,
+                        offset: 0,
+                        memory: driver_mem,
+                    });
+                    fb.local_set(bytes_ptr);
+
+                    // Read sizes_ptr from FFI struct (offset 4)
+                    fb.local_get(ffi_ptr);
+                    fb.i32_load(MemArg {
+                        align: 2,
+                        max_align: 2,
+                        offset: 4,
+                        memory: driver_mem,
+                    });
+                    fb.local_set(sizes_ptr);
+
+                    // Store each result value into bytes_ptr (driver memory)
+                    let mut byte_offset: u64 = 0;
+                    for (i, result_ty) in results.iter().enumerate() {
+                        fb.local_get(bytes_ptr);
+                        fb.local_get(result_locals[i]);
+                        let size = data_type_byte_size(result_ty);
+                        match result_ty {
+                            DataType::I32 => {
+                                fb.i32_store(MemArg {
+                                    align: 2,
+                                    max_align: 2,
+                                    offset: byte_offset,
+                                    memory: driver_mem,
+                                });
+                            }
+                            DataType::I64 => {
+                                fb.i64_store(MemArg {
+                                    align: 3,
+                                    max_align: 3,
+                                    offset: byte_offset,
+                                    memory: driver_mem,
+                                });
+                            }
+                            DataType::F32 => {
+                                fb.f32_store(MemArg {
+                                    align: 2,
+                                    max_align: 2,
+                                    offset: byte_offset,
+                                    memory: driver_mem,
+                                });
+                            }
+                            DataType::F64 => {
+                                fb.f64_store(MemArg {
+                                    align: 3,
+                                    max_align: 3,
+                                    offset: byte_offset,
+                                    memory: driver_mem,
+                                });
+                            }
+                            _ => panic!(
+                                "Unsupported result type {:?} in dispatch_core_func",
+                                result_ty
+                            ),
+                        }
+                        byte_offset += size as u64;
+                    }
+
+                    // Store size descriptors into sizes_ptr (1 byte each)
+                    for (i, result_ty) in results.iter().enumerate() {
+                        fb.local_get(sizes_ptr);
+                        fb.i32_const(data_type_byte_size(result_ty) as i32);
+                        fb.i32_store8(MemArg {
+                            align: 0,
+                            max_align: 0,
+                            offset: i as u64,
+                            memory: driver_mem,
+                        });
+                    }
                 }
+
+                // Write return lengths to out-pointers in driver memory
+                fb.local_get(return_bytes_len);
+                fb.i32_const(total_bytes as i32);
+                fb.i32_store(MemArg {
+                    align: 2,
+                    max_align: 2,
+                    offset: 0,
+                    memory: driver_mem,
+                });
+
+                fb.local_get(return_sizes_len);
+                fb.i32_const(num_results as i32);
+                fb.i32_store(MemArg {
+                    align: 2,
+                    max_align: 2,
+                    offset: 0,
+                    memory: driver_mem,
+                });
 
                 fb.return_stmt();
             }
@@ -665,6 +897,15 @@ impl<'a> GlueBuilder<'a> {
         self.build_dispatch_memory_write();
         self.build_dispatch_core_func();
         self.module
+    }
+}
+
+/// Byte size of a Wasm value type.
+fn data_type_byte_size(ty: &DataType) -> u32 {
+    match ty {
+        DataType::I32 | DataType::F32 => 4,
+        DataType::I64 | DataType::F64 => 8,
+        _ => panic!("Unsupported data type {:?}", ty),
     }
 }
 

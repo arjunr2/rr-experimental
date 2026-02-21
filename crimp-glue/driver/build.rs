@@ -3,5 +3,6 @@ fn main() {
 
     if target_arch == "wasm32" {
         println!("cargo:rustc-link-arg=--export-memory");
+        println!("cargo:rustc-cfg=feature=\"multivalue\"");
     }
 }

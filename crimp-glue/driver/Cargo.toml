@@ -15,7 +15,4 @@ clap.workspace = true
 log.workspace = true
 
 [features]
-default = ["glue"]
 multi-component = []
-# When disabled, this feature allows building the driver without glue imports (useful for testing)
-glue = []
