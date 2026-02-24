@@ -153,15 +153,15 @@ pub struct LinkingMetadata<'a> {
 
 #[derive(Debug, Serialize, Clone)]
 /// Information about canonical adapters (just Lower for now) for imports in the custom section
-struct ImportAdapterCrimpData {
+pub struct ImportAdapterCrimpData {
     /// The import index that this adapter is for
-    target: ModuleImportIndex,
+    pub target: ModuleImportIndex,
     /// The memory to use for adapter
-    memory: Option<ModuleInstanceExport>,
+    pub memory: Option<ModuleInstanceExport>,
     /// The realloc to use for adapter
-    realloc: Option<ModuleInstanceExport>,
+    pub realloc: Option<ModuleInstanceExport>,
     /// Whether this import is a builtin
-    is_builtin: bool,
+    pub is_builtin: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -307,7 +307,7 @@ impl<'a> LinkingMetadata<'a> {
                 _ => bail!("Expected FuncType at index {}", type_idx),
             };
 
-            glue.add_replay_stub(&namespaced_name, &params, &results, adapter.is_builtin);
+            glue.add_replay_stub(&namespaced_name, &params, &results, adapter, self);
         }
 
         // Register component export functions for dispatch from the driver

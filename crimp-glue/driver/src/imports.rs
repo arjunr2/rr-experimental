@@ -15,6 +15,13 @@ pub struct RRFuncArgValsFFI {
     pub sizes_len: ArgSizesLen,
 }
 
+/// Flag indicating whether the lowering is being performed for an import or export.
+#[repr(i32)]
+pub enum LoweringDirection {
+    Import = 0,
+    Export = 1,
+}
+
 #[link(wasm_import_module = "crimp_glue")]
 unsafe extern "C" {
     /// Get the checksum of the currently instantiated component/module being driven.
@@ -23,22 +30,38 @@ unsafe extern "C" {
     /// This is to avoid dynamic memory allocation in the driver.
     pub fn get_sha256_checksum(checksum_buf: *mut u8);
 
-    ///// A dispatch method that calls the appropriate realloc for the given export's lowering.
-    //pub fn dispatch_realloc(
-    //    export_index: u32,
-    //    old_addr: u32,
-    //    old_size: u32,
-    //    old_align: u32,
-    //    new_size: u32,
-    //) -> u32;
+    /// A dispatch method that calls the appropriate realloc for the given export's (wasm call) or import's
+    /// (host call) lowering.
+    ///
+    /// The export indices are unified across the component by default. The import index must be explicitly
+    /// unified by the glue
+    pub fn dispatch_realloc(
+        direction: LoweringDirection,
+        index: u32,
+        // Params for realloc
+        old_addr: u32,
+        old_size: u32,
+        old_align: u32,
+        new_size: u32,
+    ) -> u32;
 
-    ///// A dispatch method that calls the appropriate memory write for the given export's lowering.
-    //pub fn dispatch_memory_write(
-    //    export_index: u32,
-    //    offset: u32,
-    //    bytes_ptr: *const u8,
-    //    num_bytes: u32,
-    //);
+    /// A dispatch method that calls the appropriate memory write for the given export's (wasm call) or import's
+    /// (host call) lowering.
+    ///
+    /// See `dispatch_realloc` for details on the indices.
+    pub fn dispatch_memory_write(
+        direction: LoweringDirection,
+        index: u32,
+        // Params for memory write
+        offset: u32,
+        bytes_ptr: *const u8,
+        num_bytes: u32,
+    );
+
+    /// A dispatch method that calls the appropriate post_return for a given export.
+    ///
+    /// A post_return has no return values.
+    pub fn dispatch_post_return(export_index: u32, args: *const u8);
 
     /// A dispatch method that calls the appropriate core function post-lowering function for the given export.
     ///

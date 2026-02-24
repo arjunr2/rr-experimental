@@ -134,7 +134,6 @@ fn lower_memory_entry(event: LowerMemoryEntryEvent, state: State) {
 
 /// Returns the value for post_return calls
 #[inline(always)]
-#[allow(unused)]
 fn component_wasm_func_entry(
     event: component_events::WasmFuncEntryEvent,
     state: State,
@@ -158,26 +157,65 @@ fn component_wasm_func_entry(
     }
 }
 
+/// Push the realloc return value to the stack for the future realloc return event to pop and validate
 #[inline(always)]
-#[allow(unused)]
-fn realloc_entry(event: component_events::ReallocEntryEvent, state: State) {
-    unreachable!();
+fn realloc_entry(event: component_events::ReallocEntryEvent, state: State, rstack: &mut Vec<u32>) {
+    let (direction, index) = match state {
+        State::WasmCallLoweringSetup { export_index } => {
+            (LoweringDirection::Export, export_index.as_u32())
+        }
+        State::HostCall { import_index } => (LoweringDirection::Import, import_index),
+        _ => panic!("Invalid state: {:?}", state),
+    };
+    rstack.push(unsafe {
+        dispatch_realloc(
+            direction,
+            index,
+            event.old_addr as u32,
+            event.old_size as u32,
+            event.old_align,
+            event.new_size as u32,
+        )
+    });
+}
+
+/// Validate the realloc return value against the last realloc (top of the stack)
+#[inline(always)]
+fn realloc_return(
+    event: component_events::ReallocReturnEvent,
+    state: State,
+    rstack: &mut Vec<u32>,
+) {
+    match state {
+        State::WasmCallLoweringSetup { export_index: _ } | State::HostCall { import_index: _ } => {
+            let expected = event.0.ret().unwrap_or_else(|e| throw_event_error(e)) as u32;
+            expected.validate(&rstack.pop().unwrap());
+        }
+        _ => panic!("Invalid state: {:?}", state),
+    }
 }
 
 #[inline(always)]
-#[allow(unused)]
-fn realloc_return(event: component_events::ReallocReturnEvent, state: State) {
-    unreachable!();
-}
-
-#[inline(always)]
-#[allow(unused)]
 fn memory_slice_write(event: component_events::MemorySliceWriteEvent, state: State) {
-    unreachable!();
+    let (direction, index) = match state {
+        State::WasmCallLoweringSetup { export_index } => {
+            (LoweringDirection::Export, export_index.as_u32())
+        }
+        State::HostCall { import_index } => (LoweringDirection::Import, import_index),
+        _ => panic!("Invalid state: {:?}", state),
+    };
+    unsafe {
+        dispatch_memory_write(
+            direction,
+            index,
+            event.offset as u32,
+            event.bytes.as_ptr(),
+            event.bytes.len() as u32,
+        );
+    }
 }
 
 #[inline(always)]
-#[allow(unused)]
 fn lower_flat_return(event: component_events::LowerFlatReturnEvent, state: State) {
     match state {
         State::WasmCallLoweringSetup { export_index: _ } | State::HostCall { import_index: _ } => {
@@ -188,10 +226,19 @@ fn lower_flat_return(event: component_events::LowerFlatReturnEvent, state: State
 }
 
 #[inline(always)]
-#[allow(unused)]
+fn lower_memory_return(event: component_events::LowerMemoryReturnEvent, state: State) {
+    match state {
+        State::WasmCallLoweringSetup { export_index: _ } | State::HostCall { import_index: _ } => {
+            event.0.ret().unwrap_or_else(|e| throw_event_error(e));
+        }
+        _ => panic!("Invalid state: {:?}", state),
+    }
+}
+
+#[inline(always)]
 fn host_func_entry(event: common_events::HostFuncEntryEvent, state: State) {
     match state {
-        State::HostCall { import_index } => unsafe {
+        State::HostCall { import_index: _ } => unsafe {
             event
                 .args
                 .validate(&*&raw const ARGS_RESULTS_BACKING)
@@ -202,10 +249,9 @@ fn host_func_entry(event: common_events::HostFuncEntryEvent, state: State) {
 }
 
 #[inline(always)]
-#[allow(unused)]
 fn host_func_return(event: common_events::HostFuncReturnEvent, state: State) -> *mut u8 {
     match state {
-        State::HostCall { import_index } => unsafe {
+        State::HostCall { import_index: _ } => unsafe {
             // Keep the event value alive by moving it into backing.
             let backing = &mut *&raw mut ARGS_RESULTS_BACKING;
             *backing = event.args;
@@ -222,7 +268,6 @@ fn core_wasm_func_entry(event: core_events::WasmFuncEntryEvent, state: State) {
 }
 
 #[inline(always)]
-#[allow(unused)]
 fn wasm_func_return(event: common_events::WasmFuncReturnEvent, state: State) {
     match state {
         State::Root => unsafe {
@@ -236,25 +281,16 @@ fn wasm_func_return(event: common_events::WasmFuncReturnEvent, state: State) {
 }
 
 #[inline(always)]
-#[allow(unused)]
-fn post_return(event: component_events::PostReturnEvent, state: State, args: Vec<u8>) {
+fn post_return(event: component_events::PostReturnEvent, state: State, args: RRFuncArgVals) {
     match state {
         State::Root => unsafe {
-            // No return values for post return
-            let (mut param_bytes_len, mut params_sizes_len) = (0u32, 0u32);
-            dispatch_core_func(
-                event.func_index.as_u32(),
-                args.as_ptr(),
-                &raw mut param_bytes_len,
-                &raw mut params_sizes_len,
-            );
+            dispatch_post_return(event.func_index.as_u32(), args.bytes.as_ptr());
         },
         _ => panic!("Invalid state: {:?}", state),
     }
 }
 
 #[inline(always)]
-#[allow(unused)]
 fn component_wasm_func_begin(
     event: component_events::WasmFuncBeginEvent,
     state: State,
@@ -266,7 +302,6 @@ fn component_wasm_func_begin(
 }
 
 #[inline(always)]
-#[allow(unused)]
 fn component_instantiation(
     event: component_events::InstantiationEvent,
     state: State,
@@ -283,7 +318,6 @@ fn component_instantiation(
 }
 
 #[inline(always)]
-#[allow(unused)]
 fn core_wasm_instantiation(
     event: core_events::InstantiationEvent,
     state: State,
@@ -370,6 +404,7 @@ pub unsafe extern "C" fn replay_host_call(
     while let Some(event_res) = access!(REPLAYER).next() {
         let event = event_res.unwrap();
         match event {
+            // Host func boundaries
             RREvent::HostFuncEntry(e) => {
                 host_func_entry(e, *state);
             }
@@ -377,35 +412,42 @@ pub unsafe extern "C" fn replay_host_call(
                 // Done
                 return host_func_return(e, *state);
             }
-            RREvent::CoreWasmFuncEntry(e) => {
-                core_wasm_func_entry(e, *state);
-            }
-            RREvent::WasmFuncReturn(e) => {
-                wasm_func_return(e, *state);
-            }
+            // Lower boundaries
             RREvent::ComponentLowerFlatEntry(e) => {
                 lower_flat_entry(e, *state);
             }
             RREvent::ComponentLowerMemoryEntry(e) => {
                 lower_memory_entry(e, *state);
             }
+            RREvent::ComponentLowerFlatReturn(e) => {
+                lower_flat_return(e, *state);
+            }
+            RREvent::ComponentLowerMemoryReturn(e) => {
+                lower_memory_return(e, *state);
+            }
+            // Lower effects
             RREvent::ComponentReallocEntry(e) => {
-                realloc_entry(e, *state);
+                realloc_entry(e, *state, &mut realloc_return_stack);
             }
             RREvent::ComponentReallocReturn(e) => {
-                realloc_return(e, *state);
+                realloc_return(e, *state, &mut realloc_return_stack);
             }
             RREvent::ComponentMemorySliceWrite(e) => {
                 memory_slice_write(e, *state);
             }
-            RREvent::ComponentLowerFlatReturn(e) => {
-                lower_flat_return(e, *state);
+            // Recursive calls
+            RREvent::CoreWasmFuncEntry(e) => {
+                core_wasm_func_entry(e, *state);
+            }
+            RREvent::WasmFuncReturn(e) => {
+                wasm_func_return(e, *state);
             }
             _ => {
                 panic!("Invalid event {:?} encountered in replay_host_call!", event);
             }
         }
     }
+    assert!(realloc_return_stack.is_empty());
     unreachable!("Host function call did not encounter a return event!");
 }
 
@@ -452,7 +494,8 @@ pub unsafe extern "C" fn run_replay() {
 
     let state = access!(STATE);
 
-    let mut post_return_args: HashMap<ExportIndex, Vec<u8>> = HashMap::new();
+    let mut realloc_return_stack: Vec<u32> = vec![];
+    let mut post_return_args: HashMap<ExportIndex, RRFuncArgVals> = HashMap::new();
     // Top-level events: Wasm to Host function calls
     while let Some(event_res) = access!(REPLAYER).next() {
         let event = event_res.unwrap();
@@ -464,17 +507,15 @@ pub unsafe extern "C" fn run_replay() {
             RREvent::CoreWasmInstantiation(e) => {
                 core_wasm_instantiation(e, *state, &mut instance, expected_checksum);
             }
-            // Host to Wasm function call events
+            // Host to Wasm function call events (component)
             RREvent::ComponentWasmFuncBegin(e) => {
                 let export_index = component_wasm_func_begin(e, *state);
                 *state = State::WasmCallLoweringSetup { export_index };
             }
-            RREvent::WasmFuncReturn(e) => {
-                *state = State::Root;
-                wasm_func_return(e, *state);
-            }
-            RREvent::CoreWasmFuncEntry(e) => {
-                core_wasm_func_entry(e, *state);
+            RREvent::ComponentWasmFuncEntry(e) => {
+                let ret = component_wasm_func_entry(e, *state);
+                // Save args for future post return call
+                post_return_args.insert(ret.0, ret.1);
             }
             RREvent::ComponentPostReturn(e) => {
                 let args = post_return_args
@@ -482,19 +523,36 @@ pub unsafe extern "C" fn run_replay() {
                     .expect("Post return event for function that was not called!");
                 post_return(e, *state, args);
             }
-            RREvent::ComponentLowerFlatReturn(e) => {
-                lower_flat_return(e, *state);
+            // Host to Wasm function call events (core)
+            RREvent::WasmFuncReturn(e) => {
+                *state = State::Root;
+                wasm_func_return(e, *state);
             }
+            RREvent::CoreWasmFuncEntry(e) => {
+                core_wasm_func_entry(e, *state);
+            }
+            // Lower boundaries
             RREvent::ComponentLowerFlatEntry(e) => {
                 lower_flat_entry(e, *state);
+            }
+            RREvent::ComponentLowerFlatReturn(e) => {
+                lower_flat_return(e, *state);
             }
             RREvent::ComponentLowerMemoryEntry(e) => {
                 lower_memory_entry(e, *state);
             }
-            RREvent::ComponentWasmFuncEntry(e) => {
-                let ret = component_wasm_func_entry(e, *state);
-                // Save args for future post return call
-                post_return_args.insert(ret.0, ret.1.bytes);
+            RREvent::ComponentLowerMemoryReturn(e) => {
+                lower_memory_return(e, *state);
+            }
+            // Lower effects
+            RREvent::ComponentReallocEntry(e) => {
+                realloc_entry(e, *state, &mut realloc_return_stack);
+            }
+            RREvent::ComponentMemorySliceWrite(e) => {
+                memory_slice_write(e, *state);
+            }
+            RREvent::ComponentReallocReturn(e) => {
+                realloc_return(e, *state, &mut realloc_return_stack);
             }
             _ => {
                 panic!(

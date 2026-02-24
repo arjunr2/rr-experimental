@@ -15,8 +15,8 @@ use decomposer::wirm::module_builder::AddLocal;
 use decomposer::wirm::opcode::Opcode;
 
 use crate::linking::{
-    Checksum, ExportFuncMetadata, LinkingMetadata, ModuleInstanceExport, ModuleInstanceID,
-    module_name_from_ids,
+    Checksum, ExportFuncMetadata, ImportAdapterCrimpData, LinkingMetadata, ModuleInstanceExport,
+    ModuleInstanceID, module_name_from_ids,
 };
 
 pub const GLUE_MODULE_NAME: &str = "crimp_glue";
@@ -132,11 +132,12 @@ pub struct GlueBuilder<'a> {
     // Global import counter (unique across all modules)
     next_import_id: u32,
 
-    // Dispatch tables (populated per-export, consumed in finish)
-    // (record_id, func/mem in glue module)
-    realloc_dispatch: Vec<(u32, FunctionID)>,
-    memory_write_dispatch: Vec<(u32, MemoryID)>,
+    // Dispatch tables (populated per-export and per-import, consumed in finish)
+    // (direction: 0=Import/1=Export, index, func/mem in glue module)
+    realloc_dispatch: Vec<(i32, u32, FunctionID)>,
+    memory_write_dispatch: Vec<(i32, u32, MemoryID)>,
     core_func_dispatch: Vec<(u32, FunctionID, TypeID)>,
+    post_return_dispatch: Vec<(u32, FunctionID, TypeID)>,
 }
 
 impl<'a> GlueBuilder<'a> {
@@ -201,6 +202,7 @@ impl<'a> GlueBuilder<'a> {
             realloc_dispatch: Vec::new(),
             memory_write_dispatch: Vec::new(),
             core_func_dispatch: Vec::new(),
+            post_return_dispatch: Vec::new(),
         }
     }
 
@@ -269,15 +271,36 @@ impl<'a> GlueBuilder<'a> {
         export_name: &str,
         params: &[DataType],
         results: &[DataType],
-        is_builtin: bool,
+        adapter: &ImportAdapterCrimpData,
+        linking: &LinkingMetadata,
     ) {
         let import_id = self.next_import_id;
         self.next_import_id += 1;
+
+        // Register realloc/memory dispatch entries for this import (direction=0)
+        if let Some(realloc) = &adapter.realloc {
+            let realloc_instance_name =
+                module_name_from_ids(linking.module_id(realloc.mid), realloc.mid);
+            let (realloc_func_id, _) = self.ensure_func_imported(
+                realloc.mid,
+                &realloc.name,
+                &realloc_instance_name,
+                &[DataType::I32, DataType::I32, DataType::I32, DataType::I32],
+                &[DataType::I32],
+            );
+            self.realloc_dispatch.push((0, import_id, realloc_func_id));
+        }
+        if let Some(memory) = &adapter.memory {
+            let memory_instance_name =
+                module_name_from_ids(linking.module_id(memory.mid), memory.mid);
+            let mem_id = self.ensure_memory_imported(memory, &memory_instance_name);
+            self.memory_write_dispatch.push((0, import_id, mem_id));
+        }
         let mut fb = FunctionBuilder::new(params, results);
         fb.set_name(format!("stub_{}", export_name));
         let driver_mem = *self.driver_memory;
 
-        let replay_func = if is_builtin {
+        let replay_func = if adapter.is_builtin {
             self.replay_builtin_call
         } else {
             self.replay_host_call
@@ -383,7 +406,7 @@ impl<'a> GlueBuilder<'a> {
 
         // Call the replay function with (import_index, params_bytes_len, params_sizes_len)
         fb.i32_const(import_id as i32);
-        if is_builtin {
+        if adapter.is_builtin {
             fb.call(replay_func);
         } else {
             fb.i32_const(total_param_bytes as i32);
@@ -513,14 +536,43 @@ impl<'a> GlueBuilder<'a> {
                     &[DataType::I32],
                 );
                 self.realloc_dispatch
-                    .push((export_func.record_id.0, realloc_func_id));
+                    .push((1, export_func.record_id.0, realloc_func_id));
             }
             if let Some(memory) = &opts.memory {
                 let memory_instance_name =
                     module_name_from_ids(linking.module_id(memory.mid), memory.mid);
                 let mem_id = self.ensure_memory_imported(memory, &memory_instance_name);
                 self.memory_write_dispatch
-                    .push((export_func.record_id.0, mem_id));
+                    .push((1, export_func.record_id.0, mem_id));
+            }
+            if let Some(post_return) = &opts.post_return {
+                let pr_instance_name =
+                    module_name_from_ids(linking.module_id(post_return.mid), post_return.mid);
+                let pr_module = linking.module(post_return.mid);
+                let pr_export = pr_module
+                    .exports
+                    .get_by_name(post_return.name.clone())
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "Post-return '{}' not found in module for instance {:?}",
+                            post_return.name,
+                            post_return.mid
+                        )
+                    })?;
+                let pr_type_id = pr_module
+                    .functions
+                    .get_type_id(FunctionID(pr_export.index));
+                let (pr_params, pr_results) =
+                    get_func_type_params_results(pr_module.types.get(pr_type_id).unwrap());
+                let (pr_func_id, pr_glue_type_id) = self.ensure_func_imported(
+                    post_return.mid,
+                    &post_return.name,
+                    &pr_instance_name,
+                    &pr_params,
+                    &pr_results,
+                );
+                self.post_return_dispatch
+                    .push((export_func.record_id.0, pr_func_id, pr_glue_type_id));
             }
         }
 
@@ -568,11 +620,12 @@ impl<'a> GlueBuilder<'a> {
             .add_export_func("get_sha256_checksum".to_string(), *func_id);
     }
 
-    /// Build `dispatch_realloc(export_index, old_addr, old_size, old_align, new_size) -> i32`.
-    /// Dispatches to the appropriate imported realloc based on export_index.
+    /// Build `dispatch_realloc(direction, index, old_addr, old_size, old_align, new_size) -> i32`.
+    /// Dispatches to the appropriate imported realloc based on direction and index.
     fn build_dispatch_realloc(&mut self) {
         let mut fb = FunctionBuilder::new(
             &[
+                DataType::I32,
                 DataType::I32,
                 DataType::I32,
                 DataType::I32,
@@ -582,18 +635,23 @@ impl<'a> GlueBuilder<'a> {
             &[DataType::I32],
         );
         fb.set_name("dispatch_realloc".to_string());
-        let export_index = LocalID(0);
-        let old_addr = LocalID(1);
-        let old_size = LocalID(2);
-        let old_align = LocalID(3);
-        let new_size = LocalID(4);
+        let direction = LocalID(0);
+        let index = LocalID(1);
+        let old_addr = LocalID(2);
+        let old_size = LocalID(3);
+        let old_align = LocalID(4);
+        let new_size = LocalID(5);
 
         let entries = self.realloc_dispatch.clone();
-        for (record_id, realloc_func_id) in &entries {
-            // if (export_index == record_id) { call realloc; return }
-            fb.local_get(export_index);
-            fb.i32_const(*record_id as i32);
+        for (entry_dir, entry_index, realloc_func_id) in &entries {
+            // if (direction == entry_dir && index == entry_index) { call realloc; return }
+            fb.local_get(direction);
+            fb.i32_const(*entry_dir);
             fb.i32_eq();
+            fb.local_get(index);
+            fb.i32_const(*entry_index as i32);
+            fb.i32_eq();
+            fb.i32_and();
             fb.if_stmt(BlockType::Type(DataType::I32));
             {
                 fb.local_get(old_addr);
@@ -620,25 +678,31 @@ impl<'a> GlueBuilder<'a> {
             .add_export_func("dispatch_realloc".to_string(), *func_id);
     }
 
-    /// Build `dispatch_memory_write(export_index, offset, bytes_ptr, num_bytes)`.
+    /// Build `dispatch_memory_write(direction, index, offset, bytes_ptr, num_bytes)`.
     /// Copies bytes from driver memory to the appropriate component memory.
     fn build_dispatch_memory_write(&mut self) {
         let mut fb = FunctionBuilder::new(
-            &[DataType::I32, DataType::I32, DataType::I32, DataType::I32],
+            &[DataType::I32, DataType::I32, DataType::I32, DataType::I32, DataType::I32],
             &[],
         );
         fb.set_name("dispatch_memory_write".to_string());
-        let export_index = LocalID(0);
-        let offset = LocalID(1);
-        let bytes_ptr = LocalID(2);
-        let num_bytes = LocalID(3);
+        let direction = LocalID(0);
+        let index = LocalID(1);
+        let offset = LocalID(2);
+        let bytes_ptr = LocalID(3);
+        let num_bytes = LocalID(4);
 
         let driver_mem = *self.driver_memory;
-        let entries = &self.memory_write_dispatch;
-        for (record_id, target_mem_id) in entries.iter() {
-            fb.local_get(export_index);
-            fb.i32_const(*record_id as i32);
+        let entries = self.memory_write_dispatch.clone();
+        for (entry_dir, entry_index, target_mem_id) in &entries {
+            // if (direction == entry_dir && index == entry_index) { memory.copy; return }
+            fb.local_get(direction);
+            fb.i32_const(*entry_dir);
             fb.i32_eq();
+            fb.local_get(index);
+            fb.i32_const(*entry_index as i32);
+            fb.i32_eq();
+            fb.i32_and();
             fb.if_stmt(BlockType::Empty);
             {
                 // memory.copy(dst=component_mem, src=driver_mem)
@@ -654,7 +718,7 @@ impl<'a> GlueBuilder<'a> {
 
         fb.unreachable();
 
-        for _ in entries.iter() {
+        for _ in &entries {
             fb.end();
         }
 
@@ -880,6 +944,93 @@ impl<'a> GlueBuilder<'a> {
             .add_export_func("dispatch_core_func".to_string(), *func_id);
     }
 
+    /// Build `dispatch_post_return(export_index, args_ptr)`.
+    /// Reads args from driver memory and calls the appropriate post_return function.
+    fn build_dispatch_post_return(&mut self) {
+        let mut fb = FunctionBuilder::new(
+            &[DataType::I32, DataType::I32],
+            &[],
+        );
+        fb.set_name("dispatch_post_return".to_string());
+        let export_index = LocalID(0);
+        let args_ptr = LocalID(1);
+        let driver_mem = *self.driver_memory;
+
+        let entries = self.post_return_dispatch.clone();
+        for (record_id, post_return_func_id, type_id) in &entries {
+            let func_type = self.module.types.get(*type_id).unwrap().clone();
+            let (params, _results) = get_func_type_params_results(&func_type);
+
+            fb.local_get(export_index);
+            fb.i32_const(*record_id as i32);
+            fb.i32_eq();
+            fb.if_stmt(BlockType::Empty);
+            {
+                // Load each argument from args_ptr (driver memory)
+                let mut arg_offset: u64 = 0;
+                for param_ty in &params {
+                    fb.local_get(args_ptr);
+                    match param_ty {
+                        DataType::I32 => {
+                            fb.i32_load(MemArg {
+                                align: 2,
+                                max_align: 2,
+                                offset: arg_offset,
+                                memory: driver_mem,
+                            });
+                            arg_offset += 4;
+                        }
+                        DataType::I64 => {
+                            fb.i64_load(MemArg {
+                                align: 3,
+                                max_align: 3,
+                                offset: arg_offset,
+                                memory: driver_mem,
+                            });
+                            arg_offset += 8;
+                        }
+                        DataType::F32 => {
+                            fb.f32_load(MemArg {
+                                align: 2,
+                                max_align: 2,
+                                offset: arg_offset,
+                                memory: driver_mem,
+                            });
+                            arg_offset += 4;
+                        }
+                        DataType::F64 => {
+                            fb.f64_load(MemArg {
+                                align: 3,
+                                max_align: 3,
+                                offset: arg_offset,
+                                memory: driver_mem,
+                            });
+                            arg_offset += 8;
+                        }
+                        _ => panic!(
+                            "Unsupported param type {:?} in dispatch_post_return",
+                            param_ty
+                        ),
+                    }
+                }
+
+                fb.call(*post_return_func_id);
+                fb.return_stmt();
+            }
+            fb.else_stmt();
+        }
+
+        // Default: no-op return for exports without an explicit post_return
+        for _ in &entries {
+            fb.end();
+        }
+
+        let func_id = fb.finish_module(&mut self.module);
+        self.module
+            .exports
+            .add_export_func("dispatch_post_return".to_string(), *func_id);
+    }
+
     // ====================
     // ==== Finish ====
     // ====================
@@ -895,6 +1046,7 @@ impl<'a> GlueBuilder<'a> {
         self.build_get_sha256_checksum();
         self.build_dispatch_realloc();
         self.build_dispatch_memory_write();
+        self.build_dispatch_post_return();
         self.build_dispatch_core_func();
         self.module
     }

@@ -47,12 +47,12 @@ run_test() {
 
 # Component model tests
 echo "=== Component Model Tests ==="
-run_test "multi_return" "test-modules/components/multi_return.wat"
-run_test "record_small" "test-modules/components/record_small.wat"
-run_test "record_large" "test-modules/components/record_large.wat"
-run_test "variant_large" "test-modules/components/variant_large.wat"
-run_test "potpourri" "test-modules/components/potpourri.wat"
-run_test "complex_params" "test-modules/components/complex_params.wat"
+run_test "multi_return" "test-modules/components/multi_return.wasm"
+run_test "record_small" "test-modules/components/record_small.wasm"
+run_test "record_large" "test-modules/components/record_large.wasm"
+run_test "variant_large" "test-modules/components/variant_large.wasm"
+run_test "potpourri" "test-modules/components/potpourri.wasm"
+run_test "complex_params" "test-modules/components/complex_params.wasm"
 
 # Core module tests
 echo "=== Core Module Tests ==="
