@@ -53,6 +53,8 @@ run_test "record_large" "test-modules/components/record_large.wasm"
 run_test "variant_large" "test-modules/components/variant_large.wasm"
 run_test "potpourri" "test-modules/components/potpourri.wasm"
 run_test "complex_params" "test-modules/components/complex_params.wasm"
+run_test "max_flat" "test-modules/components/max_flat.wasm"
+run_test "over_max_flat" "test-modules/components/over_max_flat.wasm"
 
 # Core module tests
 echo "=== Core Module Tests ==="

@@ -1,0 +1,23 @@
+[package]
+name = "max-flat"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+dlmalloc = { version = "0.2", features = ["global"] }
+
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component]
+package = "component:test-package"
+
+[package.metadata.component.target]
+path = "wit"
+world = "my-world"
+
+[package.metadata.component.dependencies]
+
+[workspace]
