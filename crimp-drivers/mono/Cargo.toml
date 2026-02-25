@@ -1,5 +1,6 @@
 [package]
-name = "crimp-glue-driver"
+name = "crimp-driver-mono"
+description = "Monolithic implementation of the CRIMP replay driver"
 edition = "2024"
 version.workspace = true
 authors.workspace = true

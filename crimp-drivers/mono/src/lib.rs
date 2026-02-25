@@ -189,7 +189,7 @@ fn realloc_return(
     match state {
         State::WasmCallLoweringSetup { export_index: _ } | State::HostCall { import_index: _ } => {
             let expected = event.0.ret().unwrap_or_else(|e| throw_event_error(e)) as u32;
-            expected.validate(&rstack.pop().unwrap());
+            expected.validate(&rstack.pop().unwrap()).unwrap();
         }
         _ => panic!("Invalid state: {:?}", state),
     }

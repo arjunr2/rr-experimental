@@ -1,7 +1,7 @@
 //! CLI tool to decompose a WebAssembly Component into its constituent modules.
 
 use anyhow::{Context, Result, anyhow, bail};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use decomposer::wasmparser::{
     CanonicalOption, ComponentExternalKind, ExternalKind, InstantiationArgKind, Validator,
 };
@@ -47,6 +47,27 @@ macro_rules! unsupported {
     };
 }
 
+/// CLI options for how to merge modules
+#[derive(ValueEnum, Copy, Clone, Debug, Default)]
+enum MergeOptions {
+    /// No merging. Decomposed modules, glue, and driver are all kept separate.
+    #[default]
+    FullSplit,
+    /// All decomposed modules from the component and the glue + driver
+    /// are combined into a single Wasm module.
+    FullMerge,
+    /// Decompose modules are merged together and glue + driver are merged together.
+    /// The two merged outputs are kept separate.
+    DriverSplit,
+}
+
+impl MergeOptions {
+    /// Whether any merging should be done at all.
+    fn any_merge(&self) -> bool {
+        !matches!(self, MergeOptions::FullSplit)
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "decompose")]
 #[command(about = "Decompose a WebAssembly Component into its modules")]
@@ -54,15 +75,15 @@ struct CLI {
     /// Input component file to decompose.
     #[arg(short, long)]
     component: PathBuf,
-    /// Whether to generate output in WAT format (as opposed to binary format).
+    /// Whether to generate output in WAT formatted output as well.
     #[arg(short = 't', long = "wat")]
     wat: bool,
     /// Overwrite the output directory if it exists.
     #[arg(short = 'x', long = "overwrite")]
     overwrite: bool,
-    /// Merge the decomposed components with `wasm-merge` on output
+    /// Merging technique on the decomposed components with `wasm-merge` on output
     #[arg(short, long)]
-    merge: bool,
+    merge: MergeOptions,
     /// When `glue` is false, writes necessary information into a custom section for replay, and relies on
     /// engine support to read this information and drive the replay accordingly.
     ///
@@ -158,9 +179,14 @@ impl CanonicalOptionsIndex {
 }
 
 /// Run `wasm-merge` on the modules at the path, produc
+///
+/// IMPORTANT NOTE: The order of the arguments for the merge matters! Always put the expected
+/// wasm module that exports main as the first argument
 fn merge_modules<T: AsRef<Path> + AsRef<OsStr>>(input: Vec<PathBuf>, output: T) -> Result<()> {
     let mut cmd = Command::new("wasm-merge");
     cmd.arg("--all-features");
+    cmd.arg("--debuginfo");
+    cmd.arg("--rename-export-conflicts");
     for module_path in &input {
         cmd.arg(module_path);
         cmd.arg(module_path.file_stem().unwrap());
@@ -586,6 +612,7 @@ fn linking_metadata<'a>(
 struct ComponentDecomposed<'a> {
     modules: Vec<Module<'a>>,
     glue: Option<DriverGlueModules<'a>>,
+    merge_opts: MergeOptions,
 }
 
 impl<'a> ComponentDecomposed<'a> {
@@ -606,6 +633,7 @@ impl<'a> ComponentDecomposed<'a> {
     fn from_linking_metadata(
         linking: LinkingMetadata<'a>,
         glue_args: Option<GlueArgs>,
+        merge_opts: MergeOptions,
     ) -> Result<Self> {
         // Sanity checks on the linking metadata before we use it for decomposition
         let l1 = linking.mm.keys().collect::<HashSet<_>>();
@@ -658,7 +686,11 @@ impl<'a> ComponentDecomposed<'a> {
             (crimp_modules, None)
         };
 
-        Ok(Self { modules, glue })
+        Ok(Self {
+            modules,
+            glue,
+            merge_opts,
+        })
     }
 
     /// Produce a [ComponentDecomposed] from a [Component]
@@ -666,53 +698,153 @@ impl<'a> ComponentDecomposed<'a> {
         component_rc: Rc<RefCell<Component<'a>>>,
         checksum: Checksum,
         glue_args: Option<GlueArgs>,
+        merge_opts: MergeOptions,
     ) -> Result<Self> {
         let component = component_rc.borrow();
         validate_assumptions(&component)?;
         let lm = linking_metadata(&component, checksum)?;
-        let decomposed = Self::from_linking_metadata(lm, glue_args)?;
+        let decomposed = Self::from_linking_metadata(lm, glue_args, merge_opts)?;
         decomposed.validate_modules()?;
         Ok(decomposed)
     }
 
-    /// Write the decomposed modules to files in the output directory, optionally merging them with `wasm-merge`
-    fn dump_to_files(self, wat: bool, outdir: &PathBuf, merge: bool) -> Result<()> {
-        let mut module_paths = vec![];
-        for module in self.modules.into_iter().chain(
-            self.glue
-                .into_iter()
-                .flat_map(|glue| [glue.driver, glue.glue]),
-        ) {
-            let bytes = if wat && !merge {
-                wasmprinter::print_bytes(module.encode())?.into_bytes()
-            } else {
-                module.encode()
-            };
-            let mut module_path = outdir.join(
-                module
-                    .module_name
-                    .clone()
-                    .expect("The module name should always be set for decomposed modules"),
-            );
-            if !module_path.set_extension(if wat && !merge { "wat" } else { "wasm" }) {
-                panic!("Failed to add extension to module path: {:?}", module_path);
+    /// Prepare modules for DriverSplit merging by namespacing exports and renaming
+    /// cross-group import module/member names so they match after separate merges.
+    ///
+    /// After this step:
+    /// - Decomposed module exports are namespaced: `{module_name}:{export_name}`
+    /// - Inter-module imports within the decomposed group have namespaced members
+    /// - Decomposed modules' `crimp_glue` imports point to `crimp_driver` (merged driver name)
+    /// - Glue module imports from decomposed modules point to `decomposed_component`
+    fn prepare_driver_split(&mut self) {
+        let module_names: HashSet<String> = self
+            .modules
+            .iter()
+            .filter_map(|m| m.module_name.clone())
+            .collect();
+
+        // Namespace all exports in decomposed modules
+        for module in &mut self.modules {
+            let module_name = module.module_name.as_ref().unwrap().clone();
+            for export in module.exports.iter_mut() {
+                export.name = format!("{}:{}", module_name, export.name);
             }
-            log::info!("Writing module: {:?}", module_path);
-            fs::write(&module_path, bytes)?;
-            module_paths.push(module_path);
         }
 
-        if merge {
-            let mut merged_path = outdir.join("merged.wasm");
-            merge_modules(module_paths, &merged_path)?;
-            // Optionally convert to WAT if the flag is set
-            if wat {
-                let bytes = fs::read(&merged_path)?;
-                let wat_bytes = wasmprinter::print_bytes(bytes)?.into_bytes();
-                merged_path.set_extension("wat");
-                fs::write(&merged_path, wat_bytes)?;
+        // Update imports in decomposed modules
+        for module in &mut self.modules {
+            for import in module.imports.iter_mut() {
+                let import_module = import.module.to_string();
+                if module_names.contains(&import_module) {
+                    // Inter-module import: namespace the member name to match namespaced exports
+                    import.name = Cow::Owned(format!("{}:{}", import_module, import.name));
+                } else if import_module == GLUE_MODULE_NAME {
+                    // Cross-group: crimp_glue → crimp_driver (the merged driver+glue output name)
+                    // Member name already namespaced by adapt_and_update_glue, don't touch it
+                    import.module = Cow::Owned(DRIVER_MODULE_NAME.to_string());
+                }
             }
-            log::info!("Merged modules into {:?}", merged_path);
+        }
+
+        // Update imports in the glue module
+        if let Some(ref mut glue_modules) = self.glue {
+            for import in glue_modules.glue.imports.iter_mut() {
+                let import_module = import.module.to_string();
+                if module_names.contains(&import_module) {
+                    // Imports from decomposed modules → point to merged decomposed_component
+                    // Namespace member to match the namespaced exports
+                    import.name = Cow::Owned(format!("{}:{}", import_module, import.name));
+                    import.module = Cow::Owned(DECOMPOSED_COMPONENT_NAME.to_string());
+                }
+                // crimp_driver imports stay as-is (resolved within Group 2 merge)
+            }
+        }
+    }
+
+    /// Helper to write a single module to a file, returning the .wasm path.
+    /// Always writes .wasm; additionally writes .wat when the flag is set.
+    fn write_module(module: Module<'_>, wat: bool, outdir: &PathBuf) -> Result<PathBuf> {
+        let wasm_bytes = module.encode();
+        let module_name = module
+            .module_name
+            .clone()
+            .expect("The module name should always be set for decomposed modules");
+        let mut wasm_path = outdir.join(&module_name);
+        wasm_path.set_extension("wasm");
+        log::info!("Writing module: {:?}", wasm_path);
+        fs::write(&wasm_path, &wasm_bytes)?;
+        if wat {
+            let wat_bytes = wasmprinter::print_bytes(&wasm_bytes)?.into_bytes();
+            let mut wat_path = outdir.join(&module_name);
+            wat_path.set_extension("wat");
+            fs::write(&wat_path, wat_bytes)?;
+        }
+        Ok(wasm_path)
+    }
+
+    /// Optionally convert a merged wasm file to WAT format.
+    fn convert_to_wat_if_needed(path: &PathBuf, wat: bool) -> Result<()> {
+        if wat {
+            let bytes = fs::read(path)?;
+            let wat_bytes = wasmprinter::print_bytes(bytes)?.into_bytes();
+            let mut wat_path = path.clone();
+            wat_path.set_extension("wat");
+            fs::write(&wat_path, wat_bytes)?;
+        }
+        Ok(())
+    }
+
+    /// Write the decomposed modules to files in the output directory, optionally merging them with `wasm-merge`
+    fn dump_to_files(mut self, wat: bool, outdir: &PathBuf) -> Result<()> {
+        // Apply renaming for DriverSplit before writing files
+        if matches!(self.merge_opts, MergeOptions::DriverSplit) {
+            self.prepare_driver_split();
+        }
+
+        // For merge modes, don't write .wat for intermediate files — only for final merged outputs.
+        let intermediate_wat = !self.merge_opts.any_merge() && wat;
+
+        // Write decomposed modules
+        let mut decomposed_paths = vec![];
+        for module in self.modules.into_iter() {
+            decomposed_paths.push(Self::write_module(module, intermediate_wat, outdir)?);
+        }
+
+        // Write glue/driver modules (driver first — it exports _start)
+        let mut glue_driver_paths = vec![];
+        if let Some(glue) = self.glue {
+            for module in [glue.driver, glue.glue] {
+                glue_driver_paths.push(Self::write_module(module, intermediate_wat, outdir)?);
+            }
+        }
+
+        match self.merge_opts {
+            MergeOptions::FullSplit => {}
+            MergeOptions::FullMerge => {
+                let all_paths: Vec<PathBuf> = glue_driver_paths
+                    .into_iter()
+                    .chain(decomposed_paths.into_iter())
+                    .collect();
+                let merged_path = outdir.join("decomposed_component_replay.wasm");
+                merge_modules(all_paths, &merged_path)?;
+                Self::convert_to_wat_if_needed(&merged_path, wat)?;
+                log::info!("Merged all modules into {:?}", merged_path);
+            }
+            MergeOptions::DriverSplit => {
+                // Merge 1: Decomposed modules
+                let decomposed_merged = outdir.join(format!("{}.wasm", DECOMPOSED_COMPONENT_NAME));
+                merge_modules(decomposed_paths, &decomposed_merged)?;
+                Self::convert_to_wat_if_needed(&decomposed_merged, wat)?;
+                log::info!("Merged decomposed modules into {:?}", decomposed_merged);
+
+                // Merge 2: Driver + glue
+                let driver_merged_tmp = outdir.join("crimp_replay_driver.wasm");
+                merge_modules(glue_driver_paths, &driver_merged_tmp)?;
+                let driver_merged = outdir.join(format!("{}.wasm", DRIVER_MODULE_NAME));
+                fs::rename(&driver_merged_tmp, &driver_merged)?;
+                Self::convert_to_wat_if_needed(&driver_merged, wat)?;
+                log::info!("Merged driver+glue into {:?}", driver_merged);
+            }
         }
         Ok(())
     }
@@ -723,6 +855,9 @@ fn main() -> Result<()> {
     let cli = CLI::parse();
     if cli.glue ^ cli.glue_args.trace_path.is_some() {
         bail!("Glue args must be provided when glue is enabled, and vice versa");
+    }
+    if matches!(cli.merge, MergeOptions::DriverSplit) && !cli.glue {
+        bail!("DriverSplit merge mode requires --glue to be enabled");
     }
     let glue_args = cli.glue.then_some(cli.glue_args);
 
@@ -741,7 +876,8 @@ fn main() -> Result<()> {
     }
     fs::create_dir(&cli.outdir)?;
 
-    let decomposed = ComponentDecomposed::from_component(component_rc, checksum, glue_args)?;
-    decomposed.dump_to_files(cli.wat, &cli.outdir, cli.merge)?;
+    let decomposed =
+        ComponentDecomposed::from_component(component_rc, checksum, glue_args, cli.merge)?;
+    decomposed.dump_to_files(cli.wat, &cli.outdir)?;
     Ok(())
 }

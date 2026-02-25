@@ -17,6 +17,7 @@ pub struct RRFuncArgValsFFI {
 
 /// Flag indicating whether the lowering is being performed for an import or export.
 #[repr(i32)]
+#[derive(Debug)]
 pub enum LoweringDirection {
     Import = 0,
     Export = 1,
