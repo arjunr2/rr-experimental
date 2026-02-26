@@ -5,6 +5,7 @@ use clap::{Parser, ValueEnum};
 use decomposer::wasmparser::{
     CanonicalOption, ComponentExternalKind, ExternalKind, InstantiationArgKind, Validator,
 };
+use decomposer::wirm::ir::module::{GetID, LocalOrImport};
 use env_logger;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
@@ -23,6 +24,7 @@ use decomposer::ir::{
 };
 use decomposer::parse_component;
 use decomposer::wirm::Module;
+use decomposer::wirm::ir::id::FunctionID;
 use decomposer::wirm::ir::module::module_exports::Export;
 use decomposer::wirm::ir::types::CustomSection;
 
@@ -178,6 +180,35 @@ impl CanonicalOptionsIndex {
     }
 }
 
+/// Prefix all function names in the custom name section with `"{module_name}::"`.
+/// This makes function names unique and identifiable after merging.
+fn prefix_function_names(module: &mut Module<'_>) {
+    let prefix = module
+        .module_name
+        .as_ref()
+        .expect("Module name should be set")
+        .clone();
+    log::trace!("Changing prefixes for module: {:?}", prefix);
+    // There is some weirdness with setting import function names here... just ignore
+    let fids: Vec<FunctionID> = module
+        .functions
+        .iter()
+        .filter(|f| f.is_local())
+        .map(|f| FunctionID(f.get_id()))
+        .collect();
+    for fid in fids {
+        if let Some(name) = module.functions.get_name(fid).clone() {
+            module
+                .functions
+                .set_local_fn_name(fid, format!("{}::{}", prefix, name));
+        } else {
+            module
+                .functions
+                .set_local_fn_name(fid, format!("{}::func{}", prefix, *fid));
+        }
+    }
+}
+
 /// Run `wasm-merge` on the modules at the path, produc
 ///
 /// IMPORTANT NOTE: The order of the arguments for the merge matters! Always put the expected
@@ -261,7 +292,7 @@ pub(crate) fn get_export_name_from_kind_idx(
     export.name.clone()
 }
 
-/// Gather linking information for a single `InstantiationArg` into `import_md`
+/// Gather linking information for a single `InstantiationArg` into `link_imports`
 fn gather_instance_link(
     link_imports: &mut HashMap<ModuleImportIndex, ImportKind>,
     mut member_imports: HashMap<String, ModuleImportIndex>,
@@ -803,6 +834,15 @@ impl<'a> ComponentDecomposed<'a> {
 
         // For merge modes, don't write .wat for intermediate files — only for final merged outputs.
         let intermediate_wat = !self.merge_opts.any_merge() && wat;
+
+        // Prefix all function names with the module name for debuggability
+        for module in &mut self.modules {
+            prefix_function_names(module);
+        }
+        if let Some(ref mut glue) = self.glue {
+            prefix_function_names(&mut glue.driver);
+            prefix_function_names(&mut glue.glue);
+        }
 
         // Write decomposed modules
         let mut decomposed_paths = vec![];

@@ -24,7 +24,8 @@ wasm-crimp = { git = "https://github.com/bytecodealliance/wasmtime-rr-prototypin
 #wasmtime-wasi = { path = "../wasmtime-rr-prototyping/crates/wasi", features = ["default"] }
 #wasm-crimp = { path = "../wasmtime-rr-prototyping/crates/wasm-crimp", features = ['std'] }
 # For wirm/parsing (feature/support-components branch)
-wirm = { git = "https://github.com/composablesys/wirm.git", rev = "78aca16" }
+#wirm = { git = "https://github.com/composablesys/wirm.git", rev = "78aca16" }
 #wirm = { path = "../wirm" }
+wirm = { git = "https://github.com/composablesys/wirm.git", rev = "6b056fa" }
 wasmprinter = "0.244.0"
 wat = "1.244.0"
