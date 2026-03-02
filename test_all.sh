@@ -21,9 +21,9 @@ run_test() {
     fi
     local is_core=${3:-0}
     local trace_file="$TRACE_DIR/${bin_name}.trace"
-    
+
     echo "Testing: $bin_name with module $module_path"
-    
+
     # Run the binary to create trace
     echo "  Recording trace..."
     if RUST_LOG=info cargo run --bin "$bin_name" -- -c "$trace_file" -v $core_path; then
@@ -32,7 +32,7 @@ run_test() {
         echo -e "${RED}  ✗ Recording failed${NC}"
         return 1
     fi
-    
+
     # Replay the trace
     echo "  Replaying trace..."
     if RUST_LOG=info cargo run --bin replay -- -c "$trace_file" -v -f "$module_path"; then
@@ -41,7 +41,26 @@ run_test() {
         echo -e "${RED}  ✗ Replay failed${NC}"
         return 1
     fi
-    
+
+    echo ""
+}
+
+# Run a test that is expected to fail (recording should produce a non-zero exit)
+run_test_expect_fail() {
+    local bin_name=$1
+    local module_path=$2
+    local trace_file="$TRACE_DIR/${bin_name}.trace"
+
+    echo "Testing (expect fail): $bin_name with module $module_path"
+
+    echo "  Recording trace (expecting failure)..."
+    if RUST_LOG=info cargo run --bin "$bin_name" -- -c "$trace_file" -v 2>&1; then
+        echo -e "${RED}  ✗ Expected failure but succeeded${NC}"
+        return 1
+    else
+        echo -e "${GREEN}  ✓ Failed as expected${NC}"
+    fi
+
     echo ""
 }
 
@@ -55,6 +74,10 @@ run_test "potpourri" "test-modules/components/potpourri.wasm"
 run_test "complex_params" "test-modules/components/complex_params.wasm"
 run_test "max_flat" "test-modules/components/max_flat.wasm"
 run_test "over_max_flat" "test-modules/components/over_max_flat.wasm"
+run_test "resource-1" "test-modules/components/resource-1.wasm"
+run_test "resource-2" "test-modules/components/resource-2.wasm"
+run_test "resource_drop" "test-modules/components/resource_drop.wasm"
+run_test_expect_fail "resource-3" "test-modules/components/resource-3.wasm"
 
 # Core module tests
 echo "=== Core Module Tests ==="

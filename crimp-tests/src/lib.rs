@@ -12,7 +12,7 @@ use wasmtime_wasi::{self, WasiCtx, WasiCtxView, WasiView};
 
 pub struct MyState {
     ctx: WasiCtx,
-    table: ResourceTable,
+    pub table: ResourceTable,
 }
 impl WasiView for MyState {
     fn ctx(&mut self) -> wasmtime_wasi::WasiCtxView<'_> {

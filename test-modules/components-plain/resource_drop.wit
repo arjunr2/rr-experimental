@@ -1,0 +1,14 @@
+package component:test-resources;
+
+interface env {
+  resource counter {
+    increment: func();
+  }
+  create-counter: func() -> counter;
+  ping: func(n: u32) -> u32;
+}
+
+world my-world {
+  import env;
+  export run: func();
+}
