@@ -6,6 +6,7 @@
 use wirm::Module;
 
 // Re-export wasmparser types we use in our API
+use super::ComponentRef;
 pub use wirm::wasmparser::{
     CanonicalOption, ComponentExport, ComponentExternalKind, ComponentInstantiationArg,
     ComponentType, ComponentTypeRef, CoreType, Export, ExternalKind, InstantiationArg,
@@ -52,7 +53,7 @@ pub enum ComponentNode<'a> {
     Aliased(AliasInfo),
     Defined {
         /// Recursively parsed component (Rc<RefCell> for shared access and parent chain setup)
-        component: super::ComponentRef<'a>,
+        component: ComponentRef<'a>,
     },
     /// Exported - index into component's exports vector
     Exported(u32),
@@ -212,7 +213,7 @@ impl<'a> ResolvedModule<'a> {
 #[derive(Debug)]
 pub enum ResolvedComponent<'a> {
     Imported(ResolvedImport<'a>),
-    Defined { component: super::ComponentRef<'a> },
+    Defined { component: ComponentRef<'a> },
 }
 
 impl<'a> Clone for ResolvedComponent<'a> {
@@ -222,6 +223,15 @@ impl<'a> Clone for ResolvedComponent<'a> {
             Self::Defined { component } => Self::Defined {
                 component: component.clone(),
             },
+        }
+    }
+}
+
+impl<'a> ResolvedComponent<'a> {
+    pub fn defined(self) -> ComponentRef<'a> {
+        match self {
+            Self::Imported(_) => panic!("Expected defined component, found imported"),
+            Self::Defined { component } => component,
         }
     }
 }

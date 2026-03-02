@@ -8,6 +8,7 @@ use decomposer::wirm::ir::id::{ImportsID as WirmImportsID, TypeID as WirmTypeID}
 use decomposer::wirm::ir::module::module_types::Types;
 use serde::Serialize;
 
+use crate::ComponentLinkingMetadata;
 use crate::glue::{GLUE_MODULE_NAME, GlueBuilder};
 
 /// Unified naming of instances from IDs
@@ -149,6 +150,8 @@ pub struct LinkingMetadata<'a> {
     pub instantiations: HashMap<ModuleInstanceID, InstantiationLinkingMetadata>,
     /// The exported functions from this component arranged by the instance they are sourced from.
     pub export_funcs: HashMap<ModuleInstanceID, Vec<ExportFuncMetadata>>,
+    /// -- For nested component --- Capture the component instance related local metadata up the component hierarchy
+    pub clm: ComponentLinkingMetadata<'a>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -184,10 +187,14 @@ impl<'a> LinkingMetadata<'a> {
         &self.mm[&module_id].module
     }
 
-    /// Construct the adapted module (with imports and module renamed) from the instance, and get its adapter data
+    /// Construct the adapted module (with imports and module renamed) from the instance, and get its adapter data.
+    ///
+    /// When `stub_rename` is true (non-glue path), TrueImport/Builtin imports are renamed to "crimp_replay".
+    /// When false (glue path), their original import module/name are preserved for the caller to namespace.
     fn construct_adapted_module(
         &self,
         instance_id: ModuleInstanceID,
+        stub_rename: bool,
     ) -> (Module<'a>, Vec<ImportAdapterCrimpData>) {
         let assigned_name =
             |instance_id| module_name_from_ids(self.module_id(instance_id), instance_id);
@@ -203,13 +210,13 @@ impl<'a> LinkingMetadata<'a> {
             match import_kind {
                 ImportKind::Builtin => {
                     let wirm_idx = WirmImportsID(**idx);
-                    // Engine will stub with the replay result
-                    // Just provide a nice readable name
-                    module.imports.set_import_name(
-                        "crimp_replay".into(),
-                        module.imports.get(wirm_idx).name.to_string(),
-                        wirm_idx,
-                    );
+                    if stub_rename {
+                        module.imports.set_import_name(
+                            "crimp_replay".into(),
+                            module.imports.get(wirm_idx).name.to_string(),
+                            wirm_idx,
+                        );
+                    }
                     import_adapters.push(ImportAdapterCrimpData {
                         target: *idx,
                         memory: None,
@@ -219,13 +226,13 @@ impl<'a> LinkingMetadata<'a> {
                 }
                 ImportKind::TrueImport(opts) => {
                     let wirm_idx = WirmImportsID(**idx);
-                    // Engine will stub with the replay result
-                    // Just provide a nice readable name
-                    module.imports.set_import_name(
-                        "crimp_replay".into(),
-                        module.imports.get(wirm_idx).name.to_string(),
-                        wirm_idx,
-                    );
+                    if stub_rename {
+                        module.imports.set_import_name(
+                            "crimp_replay".into(),
+                            module.imports.get(wirm_idx).name.to_string(),
+                            wirm_idx,
+                        );
+                    }
                     let (mut memory, mut realloc) = (None, None);
                     if let Some(opts) = opts {
                         assert!(
@@ -267,16 +274,18 @@ impl<'a> LinkingMetadata<'a> {
         instance_id: ModuleInstanceID,
         glue: &mut GlueBuilder<'a>,
     ) -> Result<Module<'a>> {
-        let (mut module, import_adapters) = self.construct_adapted_module(instance_id);
+        let (mut module, import_adapters) = self.construct_adapted_module(instance_id, false);
         let instance_name = module_name_from_ids(self.module_id(instance_id), instance_id);
 
-        // For each import adapter (TrueImport/Builtin), rename from "crimp-replay" to "crimp_glue"
+        // For each import adapter (TrueImport/Builtin), rename to "crimp_glue"
         // with a namespaced name, and add a corresponding replay stub to the glue module.
         for adapter in &import_adapters {
             let wirm_idx = WirmImportsID(*adapter.target);
 
-            // Extract data from the import before mutating
+            // Extract data from the import before mutating — original module/name are
+            // preserved since construct_adapted_module was called with stub_rename=false.
             let import = module.imports.get(wirm_idx);
+            let original_import_module = import.module.to_string();
             let original_name = import.name.to_string();
             let type_idx = match import.ty {
                 TypeRef::Func(u) => u,
@@ -287,8 +296,12 @@ impl<'a> LinkingMetadata<'a> {
                 ),
             };
 
-            // Rename this import to point to the glue module
-            let namespaced_name = format!("{}:{}", instance_name, original_name);
+            // Rename this import to point to the glue module with deeper namespacing:
+            // <instance_name>::<original_import_module>::<original_member_name>
+            let namespaced_name = format!(
+                "{}::{}::{}",
+                instance_name, original_import_module, original_name
+            );
             module.imports.set_import_name(
                 GLUE_MODULE_NAME.into(),
                 namespaced_name.clone(),
@@ -325,7 +338,8 @@ impl<'a> LinkingMetadata<'a> {
         &self,
         instance_id: ModuleInstanceID,
     ) -> Result<(Module<'a>, Vec<u8>)> {
-        let (module, import_adapters) = self.construct_adapted_module(instance_id);
+        let (module, import_adapters) = self.construct_adapted_module(instance_id, true);
+
         // Custom section
         let empty = vec![];
         let data = CrimpSectionData {

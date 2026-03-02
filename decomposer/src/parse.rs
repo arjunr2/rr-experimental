@@ -54,13 +54,24 @@ fn handle_payload<'a>(
 ) -> Result<()> {
     use Payload::*;
 
+    // If we're inside a nested component/module, skip all payloads except
+    // depth tracking. These sections were already parsed recursively when
+    // we handled ComponentSection / ModuleSection.
+    if *depth > 0 {
+        match payload {
+            Payload::End { .. } => *depth = depth.saturating_sub(1),
+            Payload::ComponentSection { .. } | Payload::ModuleSection { .. } => *depth += 1,
+            _ => {}
+        }
+        return Ok(());
+    }
+
     // Borrow the component mutably for modifications
     let mut component = component_ref.borrow_mut();
 
     match payload {
         Version { encoding, .. } => {
-            // Only check encoding at the top level (depth 0)
-            if *depth == 0 && encoding != wasmparser::Encoding::Component {
+            if encoding != wasmparser::Encoding::Component {
                 bail!("Expected a Component, got a Module");
             }
         }
@@ -145,7 +156,7 @@ fn handle_payload<'a>(
             parser: _,
             unchecked_range,
         } => {
-            // Increment depth to skip nested Version payloads
+            // Increment depth to skip payloads emitted from inside this section
             *depth += 1;
             // Extract the module bytes from the range
             let module_bytes = &bytes[unchecked_range.start..unchecked_range.end];
@@ -164,7 +175,7 @@ fn handle_payload<'a>(
             parser: _,
             unchecked_range,
         } => {
-            // Increment depth to skip nested Version payloads
+            // Increment depth to skip payloads emitted from inside this section
             *depth += 1;
             let nested_bytes = &bytes[unchecked_range.start..unchecked_range.end];
 

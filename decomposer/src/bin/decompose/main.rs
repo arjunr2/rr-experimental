@@ -19,8 +19,9 @@ use std::{fs, vec};
 
 use decomposer::Component;
 use decomposer::ir::{
-    CoreInstanceNode, Resolve, ResolvedComponentFunc, ResolvedComponentInstance, ResolvedCoreFunc,
-    ResolvedCoreInstance, ResolvedModule,
+    ComponentInstanceNode, CoreInstanceNode, Resolve, ResolvedComponent,
+    ResolvedComponentFunc, ResolvedComponentInstance, ResolvedCoreFunc, ResolvedCoreInstance,
+    ResolvedImport, ResolvedModule,
 };
 use decomposer::parse_component;
 use decomposer::wirm::Module;
@@ -30,6 +31,9 @@ use decomposer::wirm::ir::types::CustomSection;
 
 mod linking;
 use linking::*;
+
+mod component_linking;
+use component_linking::*;
 
 mod glue;
 use glue::*;
@@ -241,29 +245,52 @@ fn merge_modules<T: AsRef<Path> + AsRef<OsStr>>(input: Vec<PathBuf>, output: T) 
 /// Validate assumptions about the component that must hold for decomposition to be valid
 ///
 /// Relax these as we build out this tool. Currently, we stop the following:
-/// * Main component instances
-/// * Nested components
+/// * Imported core modules
+/// * Imported components
+/// * FromExport main component instances
+/// * Nested components that are imported or have modules/core instances
+///     (essentially nested components can only import/export things)
 ///
 /// Note: Imports can still use things like component, module. We are not testing for
 /// full recursive enforcement of these assumptions.
 fn validate_assumptions<'a>(component: &Component<'a>) -> Result<()> {
-    unsupported!(!component.components.is_empty(), "Nested components")?;
-
     for inst in component.instances.iter_resolved(component) {
         match inst {
-            ResolvedComponentInstance::Imported(_) => {}
-            _ => {
-                unsupported!("Main, inline component instances")?;
+            ResolvedComponentInstance::Imported(_)
+            | ResolvedComponentInstance::Instantiated {
+                component_idx: _,
+                args: _,
+            } => {}
+            ResolvedComponentInstance::FromExports(_) => {
+                unsupported!("Main, inline FromExport component instances")?;
             }
         }
     }
 
     for module in component.modules.iter_resolved(&component) {
-        match module {
-            ResolvedModule::Imported { .. } => {
-                unsupported!("Imported modules")?;
+        if let ResolvedModule::Imported { .. } = module {
+            unsupported!("Imported modules")?;
+        }
+    }
+
+    for subcomponent in component.components.iter_resolved(component) {
+        match subcomponent {
+            ResolvedComponent::Imported { .. } => {
+                unsupported!("Imported components")?;
             }
-            _ => {}
+            ResolvedComponent::Defined {
+                component: subcomponent_ref,
+            } => {
+                let sc = &subcomponent_ref.borrow();
+                unsupported!(
+                    sc.modules.iter_resolved(&sc).count() > 0,
+                    "Nested components should not have modules"
+                )?;
+                unsupported!(
+                    sc.core_instances.iter_resolved(&sc).count() > 0,
+                    "Nested components should not have core instances"
+                )?;
+            }
         }
     }
 
@@ -434,58 +461,174 @@ fn gather_instance_link(
     Ok(())
 }
 
-/// Gather exported functions from the component and return them
+/// Gather exported functions from the component and return them with appropriate CRIMP recorded index
 ///
-/// TODO: Change when handling component instances - need to consider exports from nested components as well.
-/// Right now, we can simply use the `export_id` from enumerating exports, but this will change when we have exports from instances
-fn gather_component_exports(
+/// For exported instances, the exports within the instance get linearized
+fn gather_component_exports<'a>(
     export_funcs: &mut HashMap<ModuleInstanceID, Vec<ExportFuncMetadata>>,
-    component: &Component,
+    component: &Component<'a>,
     instance_map: &HashMap<ModuleInstanceID, ModuleID>,
+    clm: &ComponentLinkingMetadata<'a>,
 ) -> Result<()> {
-    for (export_id, export) in component.exports.iter().enumerate() {
-        match export.kind {
-            ComponentExternalKind::Func => match component.resolve_component_func(export.index) {
-                ResolvedComponentFunc::Imported(_) => {
-                    unsupported!("Export of imported component functions")?;
+    let mut export_id = 0;
+    for export in component.exports.iter() {
+        log::trace!(
+            "Processing export {:?} from component with parents {:?}",
+            export.name,
+            component.parents
+        );
+
+        #[derive(Debug)]
+        enum ComponentContext<'a, 'b> {
+            Main {
+                component: &'b Component<'a>,
+                instance_map: &'b HashMap<ModuleInstanceID, ModuleID>,
+            },
+            Sub {
+                sub_component: &'b Component<'a>,
+                main_component: &'b Component<'a>,
+                main_instance_map: &'b HashMap<ModuleInstanceID, ModuleID>,
+                import_binds: &'b HashMap<String, ComponentImportBindInParent>,
+            },
+        }
+
+        fn handle_func(
+            context: ComponentContext,
+            func_index: u32,
+            export_id: &mut usize,
+            export_funcs: &mut HashMap<ModuleInstanceID, Vec<ExportFuncMetadata>>,
+        ) {
+            println!("Handling func export with export_id and func_index: {:?} | {:?}", export_id, func_index);
+            let (target_component, target_instance_map) = match context {
+                ComponentContext::Main {
+                    component,
+                    instance_map,
+                } => (component, instance_map),
+                ComponentContext::Sub {
+                    sub_component,
+                    main_component: _,
+                    main_instance_map,
+                    import_binds: _,
+                } => (sub_component, main_instance_map),
+            };
+            match target_component.resolve_component_func(func_index) {
+                ResolvedComponentFunc::Imported(import) => {
+                    match import {
+                        ResolvedImport::Direct { name, ty: _ } => {
+                            // Do nothing since this will be resolved by the parent that instantiates this component
+                            let (main_component, main_instance_map, binds) =
+                                match context {
+                                    ComponentContext::Main { .. } => panic!(
+                                        "Direct imports in main component should have been ruled out by assumptions"
+                                    ),
+                                    ComponentContext::Sub {
+                                        main_component,
+                                        main_instance_map,
+                                        import_binds,
+                                        ..
+                                    } => (
+                                        main_component,
+                                        main_instance_map,
+                                        import_binds,
+                                    ),
+                                };
+                            log::trace!("Binds: {:?}; Name: {}", binds, name);
+                            match binds.get(name)
+                                .expect("Import should be matched by an import bind in the component instance") {
+                                    ComponentImportBindInParent::Func(func_idx) => {
+                                        // Handle func in the parent content
+                                        handle_func(ComponentContext::Main { component: main_component, instance_map: main_instance_map }, 
+                                            *func_idx, export_id, export_funcs)
+                                    }
+                                }
+                        }
+                        _ => panic!("Imported component funcs should only be direct imports"),
+                    }
                 }
                 ResolvedComponentFunc::Lifted {
                     core_func_idx,
                     type_idx: _type_idx,
                     options,
                 } => {
-                    let core_func = component.resolve_core_func(core_func_idx);
+                    let core_func = target_component.resolve_core_func(core_func_idx);
+                    println!("Got into lifted");
                     match core_func {
                         ResolvedCoreFunc::FromModule {
                             module_idx,
                             func_idx,
                         } => {
                             export_funcs
-                                .entry(assumed_instance_id(instance_map, ModuleID(module_idx)))
+                                .entry(assumed_instance_id(
+                                    target_instance_map,
+                                    ModuleID(module_idx),
+                                ))
                                 .or_default()
                                 .push(ExportFuncMetadata {
-                                    record_id: RecordExportIndex(export_id as u32),
+                                    record_id: RecordExportIndex(*export_id as u32),
                                     name: get_export_name_from_kind_idx(
-                                        component,
+                                        target_component,
                                         module_idx,
                                         vec![ExternalKind::Func, ExternalKind::FuncExact],
                                         func_idx,
                                     ),
                                     opts: CanonicalOptionsIndex::from_options(
-                                        &component,
+                                        target_component,
                                         &options,
-                                        instance_map,
+                                        target_instance_map,
                                     ),
                                 });
+                            *export_id += 1;
                         }
                         _ => {
-                            unsupported!(
-                                "Lifted ComponentFunc sourced from non-FromModule CoreFuncs"
-                            )?;
+                            panic!("Lifted ComponentFunc sourced from non-FromModule CoreFuncs");
                         }
                     }
                 }
-            },
+            }
+        }
+
+        match export.kind {
+            ComponentExternalKind::Func => {
+                handle_func(
+                    ComponentContext::Main {
+                        component,
+                        instance_map,
+                    },
+                    export.index,
+                    &mut export_id,
+                    export_funcs,
+                );
+            }
+            ComponentExternalKind::Instance => {
+                log::warn!("Yet to support Export(Instance)");
+                let sc_instance_id = ComponentInstanceID(export.index);
+                let sc_id = clm.instance_map.get(&sc_instance_id).unwrap();
+                let sc = clm.cm.get(sc_id).unwrap();
+                let sc_instance_metadata = clm.instantiations.get(&sc_instance_id).unwrap();
+
+                // Iterate through all the instance's subexports (only func for now)
+                for subexport in clm.cm.get(sc_id).unwrap().component.borrow().exports.iter() {
+                    log::trace!("Subexport from exported instance: {:?}", subexport);
+                    match subexport.kind {
+                        ComponentExternalKind::Func => {
+                            handle_func(
+                                ComponentContext::Sub {
+                                    sub_component: &sc.component.borrow(),
+                                    main_component: component,
+                                    main_instance_map: instance_map,
+                                    import_binds: &sc_instance_metadata.imports,
+                                },
+                                subexport.index,
+                                &mut export_id,
+                                export_funcs,
+                            );
+                        }
+                        _ => {
+                            panic!("Subexport kind is not supported for access yet..",);
+                        }
+                    }
+                }
+            }
 
             _ => {
                 log::warn!(
@@ -499,7 +642,28 @@ fn gather_component_exports(
     Ok(())
 }
 
-/// Construct the flattened mapping of instances to modules for the component
+fn gather_component_instance_map<'a>(
+    instance_map: &mut HashMap<ComponentInstanceID, ComponentID>,
+    component: &Component<'a>,
+) {
+    for (instance_idx, instance) in component.instances.iter().enumerate() {
+        match instance.resolve(component) {
+            ResolvedComponentInstance::Instantiated {
+                component_idx,
+                args: _,
+            } => {
+                instance_map.insert(
+                    ComponentInstanceID(instance_idx as u32),
+                    ComponentID(component_idx),
+                );
+            }
+            _ => {}
+        }
+    }
+    log::debug!("Gathered component instance map: {:?}", instance_map);
+}
+
+/// Construct the flattened mapping of core instances to modules for the component
 fn gather_instance_map(
     instance_map: &mut HashMap<ModuleInstanceID, ModuleID>,
     component: &Component,
@@ -536,9 +700,24 @@ fn linking_metadata<'a>(
         ..Default::default()
     };
 
+    //// Linking metadata for subcomponents is gathered recursively.
+    //let sub_linking = component
+    //    .components
+    //    .iter_resolved(component)
+    //    .map(|subcomponent| {
+    //        let subcomponent = match subcomponent {
+    //            ResolvedComponent::Imported(_) => {
+    //                panic!("Imported subcomponents should have been ruled out by assumptions");
+    //            }
+    //            ResolvedComponent::Defined { component } => component,
+    //        };
+    //        linking_metadata(&subcomponent.borrow(), Checksum::default())
+    //    })
+    //    .collect::<Result<Vec<_>>>()?;
+
     gather_instance_map(&mut linking.instance_map, component);
 
-    // Only needs to handle core instances for now
+    // Core instance linking handling populates most of linking
     for (instance_idx, instance) in component.core_instances.iter().enumerate() {
         let instance_id = ModuleInstanceID(instance_idx as u32);
         if let CoreInstanceNode::Aliased(alias) = instance {
@@ -571,7 +750,7 @@ fn linking_metadata<'a>(
                     },
                 );
 
-                // Gather linking information from args
+                // Gather the necessary imports to bind from the module
                 let module_metadata = linking.mm.entry(module_id).or_insert_with(|| {
                     // Populate import map for the module being instantiated
                     let mut metadata = ModuleMetadata {
@@ -597,7 +776,7 @@ fn linking_metadata<'a>(
                     module_idx
                 );
                 let mut instance_metadata = InstantiationLinkingMetadata {
-                    // Works for now since we only consider core instances
+                    // Works for now since we only consider core instances in the main component, not nested
                     instantiate_order: *instance_id,
                     imports: Default::default(),
                 };
@@ -634,7 +813,90 @@ fn linking_metadata<'a>(
         }
     }
 
-    gather_component_exports(&mut linking.export_funcs, &component, &linking.instance_map)?;
+    // Component instances
+    gather_component_instance_map(&mut linking.clm.instance_map, component);
+
+    for (instance_idx, instance) in component.instances.iter().enumerate() {
+        let instance_id = ComponentInstanceID(instance_idx as u32);
+        if let ComponentInstanceNode::Exported(_) = instance {
+            // Do not gather for exported instances
+            continue;
+        }
+        match instance.resolve(&component) {
+            ResolvedComponentInstance::Imported(_) => {}
+            ResolvedComponentInstance::FromExports(_) => {
+                unsupported!("Main, inline FromExport component instances")?;
+            }
+            ResolvedComponentInstance::Instantiated {
+                component_idx,
+                args,
+            } => {
+                let component_id = ComponentID(component_idx);
+                // Gather the necessary imports to bind from the component
+                let component_metadata = linking.clm.cm.entry(component_id).or_insert_with(|| {
+                    // Populate import map for the component being instantiated
+                    let mut metadata = ComponentMetadata {
+                        component: component.resolve_component(*component_id).defined(),
+                        import_map: HashMap::new(),
+                    };
+                    for (i, import) in metadata.component.borrow().imports.iter().enumerate() {
+                        metadata
+                            .import_map
+                            .insert(import.name.0.to_string(), ComponentImportIndex(i as u32));
+                    }
+                    metadata
+                });
+
+                // Gather linking information from args
+                let mut expected_imports: HashSet<&str> = component_metadata
+                    .import_map
+                    .keys()
+                    .map(|k| k.as_str())
+                    .collect();
+                assert_eq!(args.len(), expected_imports.len());
+                log::debug!("Linking for {:?} from {:?}", instance_id, component_id);
+                let mut instance_metadata = ComponentInstantiationLinkingMetadata {
+                    // Works for now since we only consider core instances in the main component, not nested
+                    instantiate_order: *instance_id,
+                    imports: Default::default(),
+                };
+
+                // Get all the import mapping
+                for arg in args {
+                    assert!(
+                        expected_imports.remove(arg.name),
+                        "import should be populated"
+                    );
+                    let bind = match arg.kind {
+                        ComponentExternalKind::Func => ComponentImportBindInParent::Func(arg.index),
+                        _ => {
+                            panic!(
+                                "Linking of import kind {:?} for component instances is not supported yet..",
+                                arg.kind
+                            );
+                        }
+                    };
+                    instance_metadata.imports.insert(arg.name.to_string(), bind);
+                }
+                assert!(
+                    expected_imports.is_empty(),
+                    "All imports should be matched by args for component instance"
+                );
+                log::info!("Instantiated {:?}: {:?}", instance_id, instance_metadata);
+                linking
+                    .clm
+                    .instantiations
+                    .insert(instance_id, instance_metadata);
+            }
+        }
+    }
+
+    gather_component_exports(
+        &mut linking.export_funcs,
+        &component,
+        &linking.instance_map,
+        &linking.clm,
+    )?;
     Ok(linking)
 }
 
@@ -655,8 +917,13 @@ impl<'a> ComponentDecomposed<'a> {
             .chain(self.glue.iter().flat_map(|glue| [&glue.driver, &glue.glue]))
         {
             Validator::new()
-                .validate_all(&module.encode())
-                .with_context(|| "Module validation failed")?;
+                .validate_all(&module.encode()?)
+                .with_context(|| {
+                    format!(
+                        "Module validation failed for module {:?}",
+                        module.module_name
+                    )
+                })?;
         }
         Ok(())
     }
@@ -795,7 +1062,7 @@ impl<'a> ComponentDecomposed<'a> {
     /// Helper to write a single module to a file, returning the .wasm path.
     /// Always writes .wasm; additionally writes .wat when the flag is set.
     fn write_module(module: Module<'_>, wat: bool, outdir: &PathBuf) -> Result<PathBuf> {
-        let wasm_bytes = module.encode();
+        let wasm_bytes = module.encode()?;
         let module_name = module
             .module_name
             .clone()

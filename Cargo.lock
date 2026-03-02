@@ -3001,8 +3001,7 @@ dependencies = [
 
 [[package]]
 name = "wirm"
-version = "2.2.0"
-source = "git+https://github.com/composablesys/wirm.git?rev=6b056fa#6b056fa3951a44d5064d4aa0e4f9ad7f26564b12"
+version = "3.0.0"
 dependencies = [
  "log",
  "serde_json",
