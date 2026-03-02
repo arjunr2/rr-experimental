@@ -9,6 +9,11 @@
 //! Note that this is not intended to be a complete implementation, but rather a scaffolding
 //! program that is further specialized to a set of components (and optionally, even a trace file
 //! if the entire trace is available ahead of time).
+//!
+//! Some todos that could improve performance:
+//! * Whenever host_call_return or builtin_return wants to send back args, it overwrites the
+//!   backing buffer completely. This includes any expansions to its capacity, so this technique
+//!   may suffer from frequent reallocations.
 
 use core::panic;
 use env_logger;
@@ -32,7 +37,7 @@ use imports::*;
 #[cfg(feature = "multi-component")]
 compile_error!("Multi-component support is not yet implemented in the Wasm replay driver.");
 
-const TRACE_FILEPATH: &str = env!("TRACE_FILEPATH");
+const TRACE_FILEPATH: Option<&str> = option_env!("TRACE_FILEPATH");
 const DESERIALIZE_BUFFER_SIZE: Option<&str> = option_env!("DESERIALIZE_BUFFER_SIZE"); // 1 MiB buffer for deserialization
 
 // ===================================================================================
@@ -56,7 +61,10 @@ enum State {
         import_index: u32,
     },
     /// Replay of builtin call return values
-    BuiltinCall,
+    BuiltinCall {
+        /// Import index
+        import_index: u32,
+    },
 }
 
 static mut REPLAYER: MaybeUninit<ReplayBuffer> = MaybeUninit::uninit();
@@ -112,6 +120,10 @@ fn check_instance(
 fn throw_event_error(error: impl EventError) -> ! {
     panic!("Replay encountered a EventError in Trace: {}", error);
 }
+use anyhow;
+fn throw_anyhow_error(error: anyhow::Error) -> ! {
+    panic!("Replay encountered a AnyhowError in Trace: {}", error);
+}
 
 /// ===================================================================================
 /// Event handlers
@@ -119,7 +131,7 @@ fn throw_event_error(error: impl EventError) -> ! {
 #[inline(always)]
 #[allow(unused)]
 fn lower_flat_entry(event: LowerFlatEntryEvent, state: State) {
-    log::warn!(
+    log::debug!(
         "Lowering entry validation (flat) cannot currently be performed in the Wasm replay driver, ignoring...."
     );
 }
@@ -127,7 +139,7 @@ fn lower_flat_entry(event: LowerFlatEntryEvent, state: State) {
 #[inline(always)]
 #[allow(unused)]
 fn lower_memory_entry(event: LowerMemoryEntryEvent, state: State) {
-    log::warn!(
+    log::debug!(
         "Lowering entry validation (memory) cannot currently be performed in the Wasm replay driver, ignoring...."
     );
 }
@@ -151,6 +163,7 @@ fn component_wasm_func_entry(
             let backing = &mut *&raw mut ARGS_RESULTS_BACKING;
             backing.bytes.set_len(param_bytes_len as usize);
             backing.sizes.set_len(params_sizes_len as usize);
+            // Need to clone here since the post_return could be executed later in the trace
             (export_index, backing.clone())
         },
         _ => panic!("Invalid state: {:?}", state),
@@ -276,6 +289,63 @@ fn wasm_func_return(event: common_events::WasmFuncReturnEvent, state: State) {
             let args = event.0.ret().unwrap_or_else(|e| throw_event_error(e));
             args.validate(backing).unwrap();
         },
+        _ => panic!("Invalid state: {:?}", state),
+    }
+}
+
+#[inline(always)]
+fn builtin_entry(event: component_events::BuiltinEntryEvent, state: State) {
+    use component_events::BuiltinEntryEvent::*;
+    match state {
+        State::BuiltinCall { .. } => match event {
+            ResourceDrop(event) => unsafe {
+                let args = RRFuncArgVals {
+                    bytes: event.idx.to_le_bytes().to_vec(),
+                    sizes: vec![4],
+                };
+                args.validate(&*&raw const ARGS_RESULTS_BACKING).unwrap();
+            },
+            _ => {
+                panic!("No support for builtin event {:?} yet...", event);
+            }
+        },
+        _ => panic!("Invalid state: {:?}", state),
+    }
+}
+
+#[inline(always)]
+fn builtin_return(event: component_events::BuiltinReturnEvent, state: State) -> *mut u8 {
+    use component_events::BuiltinReturnEvent::*;
+    match state {
+        State::BuiltinCall { import_index: _ } => unsafe {
+            let args: RRFuncArgVals;
+            match event {
+                ResourceDrop(e) => {
+                    let ret = e.ret().unwrap_or_else(|e| throw_anyhow_error(e)).0;
+                    let mut renc = [0u8; 5];
+                    match ret {
+                        Some(v) => {
+                            renc[..4].copy_from_slice(&v.to_le_bytes());
+                            renc[4] = 1u8; // Discriminator for Some
+                        } // Encode Some as 1
+                        None => {} // Encode None as 0
+                    };
+                    // Encode the option as 5-bytes (4-byte discrim + 4-byte index)
+                    args = RRFuncArgVals {
+                        bytes: renc.to_vec(),
+                        sizes: vec![5],
+                    };
+                }
+                _ => {
+                    panic!("No support for builtin event {:?} yet...", event);
+                }
+            }
+            // Keep the event value alive by moving it into backing.
+            let backing = &mut *&raw mut ARGS_RESULTS_BACKING;
+            *backing = args;
+            backing.bytes.as_mut_ptr()
+        },
+
         _ => panic!("Invalid state: {:?}", state),
     }
 }
@@ -453,17 +523,49 @@ pub unsafe extern "C" fn replay_host_call(
 
 /// Trace following for builtin calls from Wasm, similar to [`replay_host_call`]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn replay_builtin_call(export_index: u32) -> *mut u8 {
-    unreachable!("Builtin call is not yet implemented in the Wasm replay driver!");
+pub unsafe extern "C" fn replay_builtin_call(
+    import_index: u32,
+    params_bytes_len: u32,
+    params_sizes_len: u32,
+) -> *mut u8 {
+    // Set the backing buffer based on the glue filling in
+    unsafe {
+        let backing = &mut *&raw mut ARGS_RESULTS_BACKING;
+        backing.bytes.set_len(params_bytes_len as usize);
+        backing.sizes.set_len(params_sizes_len as usize);
+    }
+
+    let state = access!(STATE);
+    *state = State::BuiltinCall { import_index };
+    while let Some(event_res) = access!(REPLAYER).next() {
+        let event = event_res.unwrap();
+        match event {
+            // Builtin func boundaries
+            RREvent::ComponentBuiltinEntry(e) => {
+                builtin_entry(e, *state);
+            }
+            RREvent::ComponentBuiltinReturn(e) => {
+                // Done
+                return builtin_return(e, *state);
+            }
+            _ => {
+                panic!(
+                    "Invalid event {:?} encountered in replay_builtin_call!",
+                    event
+                );
+            }
+        }
+    }
+    unreachable!("Builtin function call did not encounter a return event!");
 }
 
 /// The main entrypoint for the replay driver, intended to be called from the Wasm engine
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn run_replay() {
     env_logger::init();
-    log::debug!("Trace file: {}", TRACE_FILEPATH);
-    let file = File::open(TRACE_FILEPATH)
-        .expect(&format!("Failed to open trace file: {}", TRACE_FILEPATH));
+    log::debug!("Trace file: {:?}", TRACE_FILEPATH);
+    let filepath = TRACE_FILEPATH.expect("TRACE_FILEPATH environment variable not set. Please set it to the path of the trace file to replay.");
+    let file = File::open(filepath).expect("Failed to open trace file");
 
     let replayer = std::ptr::addr_of_mut!(REPLAYER);
     let state = std::ptr::addr_of_mut!(STATE);
@@ -474,8 +576,9 @@ pub unsafe extern "C" fn run_replay() {
             ReplayBuffer::new_replayer(
                 BufReader::new(file),
                 ReplaySettings {
-                    // For now, we don't support validation in wasm driver
-                    validate: false,
+                    // The driver just has validate on always
+                    // If validation data is not present in trace, a warning is logged
+                    validate: true,
                     deserialize_buffer_size: DESERIALIZE_BUFFER_SIZE
                         .and_then(|s| s.parse::<usize>().ok())
                         .unwrap_or(1024), // Default to 1 KiB if not set or invalid
@@ -514,8 +617,9 @@ pub unsafe extern "C" fn run_replay() {
             }
             RREvent::ComponentWasmFuncEntry(e) => {
                 let ret = component_wasm_func_entry(e, *state);
-                // Save args for future post return call
+                // Save args for future post return call, and we are back in root state
                 post_return_args.insert(ret.0, ret.1);
+                *state = State::Root;
             }
             RREvent::ComponentPostReturn(e) => {
                 let args = post_return_args
@@ -525,7 +629,6 @@ pub unsafe extern "C" fn run_replay() {
             }
             // Host to Wasm function call events (core)
             RREvent::WasmFuncReturn(e) => {
-                *state = State::Root;
                 wasm_func_return(e, *state);
             }
             RREvent::CoreWasmFuncEntry(e) => {

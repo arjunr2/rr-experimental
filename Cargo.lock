@@ -364,7 +364,6 @@ dependencies = [
 [[package]]
 name = "cranelift-assembler-x64"
 version = "0.127.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "cranelift-assembler-x64-meta",
 ]
@@ -372,7 +371,6 @@ dependencies = [
 [[package]]
 name = "cranelift-assembler-x64-meta"
 version = "0.127.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "cranelift-srcgen",
 ]
@@ -380,7 +378,6 @@ dependencies = [
 [[package]]
 name = "cranelift-bforest"
 version = "0.127.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "cranelift-entity",
 ]
@@ -388,7 +385,6 @@ dependencies = [
 [[package]]
 name = "cranelift-bitset"
 version = "0.127.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "serde",
  "serde_derive",
@@ -397,7 +393,6 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen"
 version = "0.127.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "bumpalo",
  "cranelift-assembler-x64",
@@ -423,7 +418,6 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-meta"
 version = "0.127.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "cranelift-assembler-x64-meta",
  "cranelift-codegen-shared",
@@ -435,12 +429,10 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-shared"
 version = "0.127.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 
 [[package]]
 name = "cranelift-control"
 version = "0.127.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "arbitrary",
 ]
@@ -448,7 +440,6 @@ dependencies = [
 [[package]]
 name = "cranelift-entity"
 version = "0.127.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "cranelift-bitset",
  "serde",
@@ -458,7 +449,6 @@ dependencies = [
 [[package]]
 name = "cranelift-frontend"
 version = "0.127.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -469,12 +459,10 @@ dependencies = [
 [[package]]
 name = "cranelift-isle"
 version = "0.127.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 
 [[package]]
 name = "cranelift-native"
 version = "0.127.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "cranelift-codegen",
  "libc",
@@ -484,7 +472,6 @@ dependencies = [
 [[package]]
 name = "cranelift-srcgen"
 version = "0.127.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 
 [[package]]
 name = "crc32fast"
@@ -1529,7 +1516,6 @@ dependencies = [
 [[package]]
 name = "pulley-interpreter"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "cranelift-bitset",
  "log",
@@ -1540,7 +1526,6 @@ dependencies = [
 [[package]]
 name = "pulley-macros"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2280,7 +2265,6 @@ dependencies = [
 [[package]]
 name = "wasm-crimp"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -2362,7 +2346,6 @@ dependencies = [
 [[package]]
 name = "wasmtime"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "addr2line",
  "anyhow",
@@ -2419,7 +2402,6 @@ dependencies = [
 [[package]]
 name = "wasmtime-environ"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "cpp_demangle",
@@ -2446,7 +2428,6 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-cache"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "base64",
@@ -2465,7 +2446,6 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-component-macro"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "proc-macro2",
@@ -2479,12 +2459,10 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-component-util"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 
 [[package]]
 name = "wasmtime-internal-cranelift"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -2511,7 +2489,6 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-fiber"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "cc",
@@ -2525,7 +2502,6 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-jit-debug"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "cc",
  "object",
@@ -2536,7 +2512,6 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-jit-icache-coherence"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -2547,7 +2522,6 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-math"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "libm",
 ]
@@ -2555,12 +2529,10 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-slab"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 
 [[package]]
 name = "wasmtime-internal-unwinder"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -2572,7 +2544,6 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-versioned-export-macros"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2582,7 +2553,6 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-winch"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -2599,7 +2569,6 @@ dependencies = [
 [[package]]
 name = "wasmtime-internal-wit-bindgen"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -2611,7 +2580,6 @@ dependencies = [
 [[package]]
 name = "wasmtime-wasi"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2641,7 +2609,6 @@ dependencies = [
 [[package]]
 name = "wasmtime-wasi-io"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2684,7 +2651,6 @@ dependencies = [
 [[package]]
 name = "wiggle"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -2697,7 +2663,6 @@ dependencies = [
 [[package]]
 name = "wiggle-generate"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "heck",
@@ -2710,7 +2675,6 @@ dependencies = [
 [[package]]
 name = "wiggle-macro"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2752,7 +2716,6 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 [[package]]
 name = "winch-codegen"
 version = "40.0.0"
-source = "git+https://github.com/bytecodealliance/wasmtime-rr-prototyping.git?branch=crimp-dev#1bcd2842e7c3b560bc2fbdcf8b53617e8fdc57c6"
 dependencies = [
  "anyhow",
  "cranelift-assembler-x64",

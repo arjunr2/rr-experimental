@@ -92,25 +92,36 @@ pub struct ModuleInstanceExport {
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Hash, Serialize)]
 pub struct RecordExportIndex(pub u32);
 
-/// Index for canonical options adapters within a module's IR.
+/// Index for canonical options adapters (e.g. lower/lift) within a module's IR.
 ///
 /// We specifically identify instances as opposed to just modules because if a module
 /// is instantiated multiple times, this points to only one specific instances of adapter functions
 #[derive(Debug, Default, Serialize, Clone)]
-pub struct CanonicalOptionsIndex {
+pub struct CanonicalAdapterOptionsIndex {
     pub memory: Option<ModuleInstanceExport>,
     pub realloc: Option<ModuleInstanceExport>,
     pub post_return: Option<ModuleInstanceExport>,
 }
 
-#[derive(Debug, Clone)]
+/// Options for builtin imports that perform extra side-effects
+#[derive(Debug, Clone, Serialize)]
+pub enum BuiltinOptions {
+    ResourceDrop {
+        /// Whether the resource drop triggers a host destructor
+        host_dtor: bool,
+        /// Whether the resource drop triggers a guest destructor, and if so, the export to call for it
+        guest_dtor: Option<ModuleInstanceExport>,
+    },
+}
+
 /// The kind of a resolved imports when linked within the component
+#[derive(Debug, Clone)]
 pub enum ImportKind {
     /// These are 'real' imports that are not linked into from sister instances.
     /// For canon lowers, the args are provided in the optional canonical options.
-    TrueImport(Option<CanonicalOptionsIndex>),
+    TrueImport(CanonicalAdapterOptionsIndex),
     /// The IDs for the imports in this module's instance that are builtins (e.g. from canonical options)
-    Builtin,
+    Builtin(BuiltinOptions),
     /// Renames for import with the target module's instance(package) and member name that it must be linked to
     Rename {
         package: ModuleInstanceID,
@@ -134,7 +145,7 @@ pub struct ExportFuncMetadata {
     pub name: String,
     /// ID, as assigned to this export by the CRIMP recorder.
     pub record_id: RecordExportIndex,
-    pub opts: Option<CanonicalOptionsIndex>,
+    pub opts: CanonicalAdapterOptionsIndex,
 }
 
 /// Metadata needed to capture complete linking information for a component for CRIMP replay custom section
@@ -155,7 +166,7 @@ pub struct LinkingMetadata<'a> {
 }
 
 #[derive(Debug, Serialize, Clone)]
-/// Information about canonical adapters (just Lower for now) for imports in the custom section
+/// Information about canonical adapters (just Lower and some builtins for now) for imports in the custom section
 pub struct ImportAdapterCrimpData {
     /// The import index that this adapter is for
     pub target: ModuleImportIndex,
@@ -164,7 +175,7 @@ pub struct ImportAdapterCrimpData {
     /// The realloc to use for adapter
     pub realloc: Option<ModuleInstanceExport>,
     /// Whether this import is a builtin
-    pub is_builtin: bool,
+    pub builtin: Option<BuiltinOptions>,
 }
 
 #[derive(Debug, Serialize)]
@@ -208,7 +219,7 @@ impl<'a> LinkingMetadata<'a> {
         for (idx, import_kind) in imports {
             populated[**idx as usize] = true;
             match import_kind {
-                ImportKind::Builtin => {
+                ImportKind::Builtin(bopts) => {
                     let wirm_idx = WirmImportsID(**idx);
                     if stub_rename {
                         module.imports.set_import_name(
@@ -221,7 +232,7 @@ impl<'a> LinkingMetadata<'a> {
                         target: *idx,
                         memory: None,
                         realloc: None,
-                        is_builtin: true,
+                        builtin: Some(bopts.clone()),
                     });
                 }
                 ImportKind::TrueImport(opts) => {
@@ -233,21 +244,16 @@ impl<'a> LinkingMetadata<'a> {
                             wirm_idx,
                         );
                     }
-                    let (mut memory, mut realloc) = (None, None);
-                    if let Some(opts) = opts {
-                        assert!(
-                            opts.post_return.is_none(),
-                            "Post return should never be present for module imports"
-                        );
-                        memory = opts.memory.clone();
-                        realloc = opts.realloc.clone();
-                    };
+                    assert!(
+                        opts.post_return.is_none(),
+                        "Post return should never be present for module imports"
+                    );
                     // When memory and realloc are always set together, if present
                     import_adapters.push(ImportAdapterCrimpData {
                         target: *idx,
-                        memory,
-                        realloc,
-                        is_builtin: false,
+                        memory: opts.memory.clone(),
+                        realloc: opts.realloc.clone(),
+                        builtin: None,
                     });
                 }
                 ImportKind::Rename { package, member } => {

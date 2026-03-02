@@ -17,8 +17,8 @@ use decomposer::wirm::module_builder::AddLocal;
 use decomposer::wirm::opcode::{Inject, Opcode};
 
 use crate::linking::{
-    Checksum, ExportFuncMetadata, ImportAdapterCrimpData, LinkingMetadata, ModuleInstanceExport,
-    ModuleInstanceID, module_name_from_ids,
+    BuiltinOptions, Checksum, ExportFuncMetadata, ImportAdapterCrimpData, LinkingMetadata,
+    ModuleInstanceExport, ModuleInstanceID, module_name_from_ids,
 };
 
 pub const GLUE_MODULE_NAME: &str = "crimp_glue";
@@ -178,10 +178,11 @@ impl<'a> GlueBuilder<'a> {
             "replay_host_call".to_string(),
             replay_host_call_type,
         );
-        // replay_builtin_call: (i32) -> i32
-        let replay_builtin_type = module
-            .types
-            .add_func_type(&[DataType::I32], &[DataType::I32]);
+        // replay_builtin_call: (import_index, params_bytes_len, params_sizes_len) -> i32
+        let replay_builtin_type = module.types.add_func_type(
+            &[DataType::I32, DataType::I32, DataType::I32],
+            &[DataType::I32],
+        );
         let (replay_builtin_call, _) = module.add_import_func(
             DRIVER_MODULE_NAME.to_string(),
             "replay_builtin_call".to_string(),
@@ -314,7 +315,7 @@ impl<'a> GlueBuilder<'a> {
         fb.set_name(format!("stub_{}", export_name));
         let driver_mem = *self.driver_memory;
 
-        let replay_func = if adapter.is_builtin {
+        let replay_func = if adapter.builtin.is_some() {
             self.replay_builtin_call
         } else {
             self.replay_host_call
@@ -372,27 +373,143 @@ impl<'a> GlueBuilder<'a> {
 
         // Call the replay function with (import_index, params_bytes_len, params_sizes_len)
         fb.i32_const(import_id as i32);
-        if adapter.is_builtin {
-            fb.call(replay_func);
-        } else {
-            fb.i32_const(total_param_bytes as i32);
-            fb.i32_const(num_params as i32);
-            fb.call(replay_func);
-        }
+        fb.i32_const(total_param_bytes as i32);
+        fb.i32_const(num_params as i32);
+        fb.call(replay_func);
 
-        if results.is_empty() {
-            // No return values: drop the pointer
-            fb.drop();
-        } else {
-            // Save the returned pointer to a local
-            let ret_ptr = fb.add_local(DataType::I32);
-            fb.local_set(ret_ptr);
+        // Save the result pointer (always returned by replay_host_call/replay_builtin_call)
+        let result_ptr = fb.add_local(DataType::I32);
+        fb.local_set(result_ptr);
 
-            // Load each result from driver memory at ret_ptr + offset
+        if !results.is_empty() {
+            // Load each result from driver memory at result_ptr + offset
             let mut offset: u64 = 0;
             for result_ty in results {
-                fb.local_get(ret_ptr);
+                fb.local_get(result_ptr);
                 offset = emit_typed_load(&mut fb, result_ty, driver_mem, offset);
+            }
+        }
+
+        // Handle builtin side-effects (e.g. resource destructors)
+        if let Some(builtin) = &adapter.builtin {
+            match builtin {
+                BuiltinOptions::ResourceDrop {
+                    host_dtor,
+                    guest_dtor,
+                } => {
+                    if *host_dtor || guest_dtor.is_some() {
+                        // The replay_builtin_call result buffer layout:
+                        //   offset 0: i32 — resource rep to pass to the destructor
+                        //   offset 4: u8  — some/none flag (non-zero = call dtor)
+                        let dtor_rep = fb.add_local(DataType::I32);
+
+                        // Load rep (i32) from offset 0
+                        fb.local_get(result_ptr);
+                        fb.i32_load(MemArg {
+                            align: 2,
+                            max_align: 2,
+                            offset: 0,
+                            memory: driver_mem,
+                        });
+                        fb.local_set(dtor_rep);
+
+                        // Load some/none flag (u8) from offset 4
+                        fb.local_get(result_ptr);
+                        fb.inject(Operator::I32Load8U {
+                            memarg: MemArg {
+                                align: 0,
+                                max_align: 0,
+                                offset: 4,
+                                memory: driver_mem,
+                            },
+                        });
+
+                        // Conditionally execute destructors if flag is set
+                        fb.if_stmt(BlockType::Empty);
+                        {
+                            if *host_dtor {
+                                // Host destructor: replay the host dtor call with [dtor_rep] -> []
+                                let dtor_import_id = self.next_import_id;
+                                self.next_import_id += 1;
+
+                                let dtor_ffi_ptr = fb.add_local(DataType::I32);
+                                let dtor_bytes_ptr = fb.add_local(DataType::I32);
+                                let dtor_sizes_ptr = fb.add_local(DataType::I32);
+
+                                // Allocate FFI buffer for [i32] params
+                                fb.i32_const(4); // total_param_bytes: one i32
+                                fb.i32_const(1); // num_params
+                                fb.call(self.allocate_args_results_buffer);
+                                fb.local_set(dtor_ffi_ptr);
+
+                                // Read bytes_ptr from FFI struct (offset 0)
+                                fb.local_get(dtor_ffi_ptr);
+                                fb.i32_load(MemArg {
+                                    align: 2,
+                                    max_align: 2,
+                                    offset: 0,
+                                    memory: driver_mem,
+                                });
+                                fb.local_set(dtor_bytes_ptr);
+
+                                // Read sizes_ptr from FFI struct (offset 4)
+                                fb.local_get(dtor_ffi_ptr);
+                                fb.i32_load(MemArg {
+                                    align: 2,
+                                    max_align: 2,
+                                    offset: 4,
+                                    memory: driver_mem,
+                                });
+                                fb.local_set(dtor_sizes_ptr);
+
+                                // Store the resource rep into the dtor buffer
+                                fb.local_get(dtor_bytes_ptr);
+                                fb.local_get(dtor_rep);
+                                fb.i32_store(MemArg {
+                                    align: 2,
+                                    max_align: 2,
+                                    offset: 0,
+                                    memory: driver_mem,
+                                });
+
+                                // Store size descriptor (4 bytes for i32)
+                                fb.local_get(dtor_sizes_ptr);
+                                fb.i32_const(4);
+                                fb.i32_store8(MemArg {
+                                    align: 0,
+                                    max_align: 0,
+                                    offset: 0,
+                                    memory: driver_mem,
+                                });
+
+                                // Call replay_host_call for the host destructor
+                                fb.i32_const(dtor_import_id as i32);
+                                fb.i32_const(4); // params_bytes_len
+                                fb.i32_const(1); // params_sizes_len
+                                fb.call(self.replay_host_call);
+                                fb.drop(); // dtor returns [], drop the result pointer
+                            }
+
+                            if let Some(guest_dtor_export) = guest_dtor {
+                                // Guest destructor: import and call the guest dtor function
+                                let dtor_instance_name = module_name_from_ids(
+                                    linking.module_id(guest_dtor_export.mid),
+                                    guest_dtor_export.mid,
+                                );
+                                let (dtor_func_id, _) = self.ensure_func_imported(
+                                    guest_dtor_export.mid,
+                                    &guest_dtor_export.name,
+                                    &dtor_instance_name,
+                                    &[DataType::I32],
+                                    &[],
+                                );
+                                fb.local_get(dtor_rep);
+                                fb.call(dtor_func_id);
+                            }
+                        }
+                        fb.end();
+                    }
+                }
             }
         }
 
@@ -449,57 +566,53 @@ impl<'a> GlueBuilder<'a> {
             .push((export_func.record_id.0, glue_func_id, glue_type_id));
 
         // Import realloc if present in canonical options
-        if let Some(opts) = &export_func.opts {
-            if let Some(realloc) = &opts.realloc {
-                let realloc_instance_name =
-                    module_name_from_ids(linking.module_id(realloc.mid), realloc.mid);
-                let (realloc_func_id, _) = self.ensure_func_imported(
-                    realloc.mid,
-                    &realloc.name,
-                    &realloc_instance_name,
-                    &[DataType::I32, DataType::I32, DataType::I32, DataType::I32],
-                    &[DataType::I32],
-                );
-                self.realloc_export_dispatch
-                    .push((export_func.record_id.0, realloc_func_id));
-            }
-            if let Some(memory) = &opts.memory {
-                let memory_instance_name =
-                    module_name_from_ids(linking.module_id(memory.mid), memory.mid);
-                let mem_id = self.ensure_memory_imported(memory, &memory_instance_name);
-                self.memwrite_export_dispatch
-                    .push((export_func.record_id.0, mem_id));
-            }
-            if let Some(post_return) = &opts.post_return {
-                let pr_instance_name =
-                    module_name_from_ids(linking.module_id(post_return.mid), post_return.mid);
-                let pr_module = linking.module(post_return.mid);
-                let pr_export = pr_module
-                    .exports
-                    .get_by_name(post_return.name.clone())
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "Post-return '{}' not found in module for instance {:?}",
-                            post_return.name,
-                            post_return.mid
-                        )
-                    })?;
-                let pr_type_id = pr_module.functions.get_type_id(FunctionID(pr_export.index));
-                let (pr_params, pr_results) =
-                    get_func_type_params_results(pr_module.types.get(pr_type_id).unwrap());
-                let (pr_func_id, pr_glue_type_id) = self.ensure_func_imported(
-                    post_return.mid,
-                    &post_return.name,
-                    &pr_instance_name,
-                    &pr_params,
-                    &pr_results,
-                );
-                self.post_return_dispatch.push((
-                    export_func.record_id.0,
-                    pr_func_id,
-                    pr_glue_type_id,
-                ));
-            }
+        let opts = &export_func.opts;
+        if let Some(realloc) = &opts.realloc {
+            let realloc_instance_name =
+                module_name_from_ids(linking.module_id(realloc.mid), realloc.mid);
+            let (realloc_func_id, _) = self.ensure_func_imported(
+                realloc.mid,
+                &realloc.name,
+                &realloc_instance_name,
+                &[DataType::I32, DataType::I32, DataType::I32, DataType::I32],
+                &[DataType::I32],
+            );
+            self.realloc_export_dispatch
+                .push((export_func.record_id.0, realloc_func_id));
+        }
+        if let Some(memory) = &opts.memory {
+            let memory_instance_name =
+                module_name_from_ids(linking.module_id(memory.mid), memory.mid);
+            let mem_id = self.ensure_memory_imported(memory, &memory_instance_name);
+            self.memwrite_export_dispatch
+                .push((export_func.record_id.0, mem_id));
+        }
+        if let Some(post_return) = &opts.post_return {
+            let pr_instance_name =
+                module_name_from_ids(linking.module_id(post_return.mid), post_return.mid);
+            let pr_module = linking.module(post_return.mid);
+            let pr_export = pr_module
+                .exports
+                .get_by_name(post_return.name.clone())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Post-return '{}' not found in module for instance {:?}",
+                        post_return.name,
+                        post_return.mid
+                    )
+                })?;
+            let pr_type_id = pr_module.functions.get_type_id(FunctionID(pr_export.index));
+            let (pr_params, pr_results) =
+                get_func_type_params_results(pr_module.types.get(pr_type_id).unwrap());
+            let (pr_func_id, pr_glue_type_id) = self.ensure_func_imported(
+                post_return.mid,
+                &post_return.name,
+                &pr_instance_name,
+                &pr_params,
+                &pr_results,
+            );
+            self.post_return_dispatch
+                .push((export_func.record_id.0, pr_func_id, pr_glue_type_id));
         }
 
         Ok(())

@@ -21,7 +21,7 @@ use decomposer::Component;
 use decomposer::ir::{
     ComponentInstanceNode, CoreInstanceNode, Resolve, ResolvedComponent,
     ResolvedComponentFunc, ResolvedComponentInstance, ResolvedCoreFunc, ResolvedCoreInstance,
-    ResolvedImport, ResolvedModule,
+    ResolvedImport, ResolvedModule, ResolvedType,
 };
 use decomposer::parse_component;
 use decomposer::wirm::Module;
@@ -118,13 +118,13 @@ struct InstanceExportInterface {
     kind: InstanceKind,
 }
 
-impl CanonicalOptionsIndex {
+impl CanonicalAdapterOptionsIndex {
     /// Indexes the options for a canonical function within the module's IR
     pub fn from_options<'a>(
         component: &Component<'a>,
         options: &[CanonicalOption],
         instance_map: &HashMap<ModuleInstanceID, ModuleID>,
-    ) -> Option<Self> {
+    ) -> Self {
         fn func_resolve<'a>(
             component: &Component<'a>,
             func_idx: u32,
@@ -151,7 +151,7 @@ impl CanonicalOptionsIndex {
             }
         }
 
-        let mut opts_ref = CanonicalOptionsIndex::default();
+        let mut opts_ref = CanonicalAdapterOptionsIndex::default();
         for opt in options {
             match opt {
                 //CanonicalOption::Memory(memory_idx) => opts_ref.memory = Some(name.clone()),
@@ -174,13 +174,14 @@ impl CanonicalOptionsIndex {
                         ),
                     });
                 }
-                CanonicalOption::UTF8 | CanonicalOption::UTF16 => {
-                    // These options are implicitly capturing in recording, so do nothing
+                CanonicalOption::UTF8 => {
+                    // UTF8 is assumed to be the only format for now to prevent recording transcodings
+                    // which are not yet supported 
                 }
                 _ => panic!("Canonical option variant not supported yet: {:?}", opt),
             }
         }
-        (!options.is_empty()).then_some(opts_ref)
+        opts_ref
     }
 }
 
@@ -351,7 +352,7 @@ fn gather_instance_link(
                                         link_imports.insert(
                                             core_import_idx,
                                             ImportKind::TrueImport(
-                                                CanonicalOptionsIndex::from_options(
+                                                CanonicalAdapterOptionsIndex::from_options(
                                                     &component,
                                                     &options,
                                                     instance_map,
@@ -393,9 +394,22 @@ fn gather_instance_link(
                                     },
                                 );
                             }
-                            ResolvedCoreFunc::ResourceDrop { .. } => {
-                                log::trace!("CoreFunc[{:?}] is a resource drop", export.index);
-                                link_imports.insert(core_import_idx, ImportKind::Builtin);
+                            ResolvedCoreFunc::ResourceDrop { resource } => {
+                                let ty = component.resolve_type(resource);
+                                log::trace!("CoreFunc[{:?}] is a resource drop with type {:?}", export.index, ty);
+                                let (host_dtor, guest_dtor) = match ty {
+                                    ResolvedType::Defined(x) => {
+                                        panic!("Yet to support defined type: {:?}", x);
+                                    }
+                                    ResolvedType::Imported(_) => {
+                                        // Host destructors called on imported resources
+                                        (true, None)
+                                    }
+                                };
+                                link_imports.insert(core_import_idx, ImportKind::Builtin(BuiltinOptions::ResourceDrop {
+                                    host_dtor,
+                                    guest_dtor,
+                                }));
                             }
                         }
                     }
@@ -418,7 +432,6 @@ fn gather_instance_link(
                         );
                     }
                     ExternalKind::Memory => {
-                        println!("Resolving CoreMemory export: {:?}", export);
                         let memory = component.resolve_core_memory(export.index);
                         let module_id = ModuleID(memory.module_idx);
                         log::trace!("CoreMemory resolved to {:?}", memory);
@@ -498,7 +511,6 @@ fn gather_component_exports<'a>(
             export_id: &mut usize,
             export_funcs: &mut HashMap<ModuleInstanceID, Vec<ExportFuncMetadata>>,
         ) {
-            println!("Handling func export with export_id and func_index: {:?} | {:?}", export_id, func_index);
             let (target_component, target_instance_map) = match context {
                 ComponentContext::Main {
                     component,
@@ -551,7 +563,6 @@ fn gather_component_exports<'a>(
                     options,
                 } => {
                     let core_func = target_component.resolve_core_func(core_func_idx);
-                    println!("Got into lifted");
                     match core_func {
                         ResolvedCoreFunc::FromModule {
                             module_idx,
@@ -571,7 +582,7 @@ fn gather_component_exports<'a>(
                                         vec![ExternalKind::Func, ExternalKind::FuncExact],
                                         func_idx,
                                     ),
-                                    opts: CanonicalOptionsIndex::from_options(
+                                    opts: CanonicalAdapterOptionsIndex::from_options(
                                         target_component,
                                         &options,
                                         target_instance_map,
