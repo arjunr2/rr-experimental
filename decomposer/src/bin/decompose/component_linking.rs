@@ -65,6 +65,10 @@ pub enum ComponentImportBindInParent {
 #[derive(Debug)]
 pub struct ComponentInstantiationLinkingMetadata {
     /// The order in which this component should be instantiated w.r.t other components
+    #[allow(
+        dead_code,
+        reason = "for single component instantiations, ordering is unnecessary"
+    )]
     pub instantiate_order: InstantiateOrder,
     /// Metadata capturing all the import linking information for a component instantiation.
     ///
