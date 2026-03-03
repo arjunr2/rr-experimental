@@ -326,6 +326,105 @@ pub(crate) fn get_export_name_from_kind_idx(
 }
 
 /// Gather linking information for a single `InstantiationArg` into `link_imports`
+/// Resolve a core func index into its corresponding [ImportKind] for linking.
+///
+/// This handles lowered imports, module exports, resource builtins, and recursively
+/// resolves destructors for resource drops.
+fn resolve_core_func_link(
+    core_func_idx: u32,
+    component: &Component,
+    instance_map: &HashMap<ModuleInstanceID, ModuleID>,
+) -> ImportKind {
+    let core_func = component.resolve_core_func(core_func_idx);
+    match core_func {
+        ResolvedCoreFunc::Lowered { func_idx, options } => {
+            let comp_func = component.resolve_component_func(func_idx);
+            log::trace!(
+                "CoreFunc[{:?}] lowered from ComponentFunc[{:?}] with options {:?}",
+                core_func_idx,
+                comp_func,
+                options
+            );
+            match comp_func {
+                ResolvedComponentFunc::Imported { .. } => {
+                    ImportKind::TrueImport(
+                        CanonicalAdapterOptionsIndex::from_options(
+                            &component,
+                            &options,
+                            instance_map,
+                        ),
+                    )
+                }
+                ResolvedComponentFunc::Lifted { .. } => {
+                    panic!(
+                        "Lowered CoreFunc should not come from lifted ComponentFunc"
+                    )
+                }
+            }
+        }
+        ResolvedCoreFunc::FromModule {
+            module_idx,
+            func_idx,
+        } => {
+            let module_id = ModuleID(module_idx);
+            log::trace!(
+                "CoreFunc[{:?}] from module {:?} func idx {:?}",
+                core_func_idx,
+                module_idx,
+                func_idx
+            );
+            let export_name = get_export_name_from_kind_idx(
+                component,
+                module_idx,
+                vec![ExternalKind::Func, ExternalKind::FuncExact],
+                func_idx,
+            );
+            ImportKind::Rename {
+                package: assumed_instance_id(instance_map, module_id),
+                member: export_name,
+            }
+        }
+        ResolvedCoreFunc::ResourceDrop { resource } => {
+            let ty = component.resolve_type(resource);
+            log::trace!("CoreFunc[{:?}] is a resource drop with type {:?}", core_func_idx, ty);
+            let (host_dtor, guest_dtor) = match ty {
+                ResolvedType::Defined(ty) => {
+                    match ty {
+                        ComponentType::Resource { rep: _, dtor } => {
+                            let guest_dtor = dtor.map(|dtor_idx| {
+                                let dtor_link = resolve_core_func_link(dtor_idx, component, instance_map);
+                                match dtor_link {
+                                    ImportKind::Rename { package, member } => {
+                                        ModuleInstanceExport { mid: package, name: member }
+                                    }
+                                    _ => panic!(
+                                        "Resource dtor should resolve to a module export (Rename), got {:?}",
+                                        dtor_link
+                                    ),
+                                }
+                            });
+                            (false, guest_dtor)
+                        }
+                        _ => panic!("Only resource types supported currently for resource drop functions"),
+                    }
+                }
+                ResolvedType::Imported(_) => {
+                    // Host destructors called on imported resources
+                    (true, None)
+                }
+            };
+            ImportKind::Builtin(BuiltinOptions::ResourceDrop {
+                host_dtor,
+                guest_dtor,
+            })
+        }
+        ResolvedCoreFunc::ResourceRep { resource: _ } | ResolvedCoreFunc::ResourceNew { resource: _ } => {
+            log::trace!("CoreFunc[{:?}] is a {:?}", core_func_idx, core_func);
+            ImportKind::Builtin(BuiltinOptions::NoSideEffects)
+        }
+    }
+}
+
 fn gather_instance_link(
     link_imports: &mut HashMap<ModuleImportIndex, ImportKind>,
     mut member_imports: HashMap<String, ModuleImportIndex>,
@@ -342,96 +441,8 @@ fn gather_instance_link(
             InstanceKind::FromExports => {
                 match export.kind {
                     ExternalKind::Func => {
-                        let core_func = component.resolve_core_func(export.index);
-                        match core_func {
-                            ResolvedCoreFunc::Lowered { func_idx, options } => {
-                                let comp_func = component.resolve_component_func(func_idx);
-                                log::trace!(
-                                    "CoreFunc[{:?}] lowered from ComponentFunc[{:?}] with options {:?}",
-                                    export.index,
-                                    comp_func,
-                                    options
-                                );
-                                match comp_func {
-                                    ResolvedComponentFunc::Imported { .. } => {
-                                        link_imports.insert(
-                                            core_import_idx,
-                                            ImportKind::TrueImport(
-                                                CanonicalAdapterOptionsIndex::from_options(
-                                                    &component,
-                                                    &options,
-                                                    instance_map,
-                                                ),
-                                            ),
-                                        );
-                                    }
-                                    ResolvedComponentFunc::Lifted { .. } => {
-                                        panic!(
-                                            "Lowered CoreFunc should not come from lifted ComponentFunc"
-                                        )
-                                    }
-                                }
-                            }
-                            ResolvedCoreFunc::FromModule {
-                                module_idx,
-                                func_idx,
-                            } => {
-                                let module_id = ModuleID(module_idx);
-                                log::trace!(
-                                    "CoreFunc[{:?}] from module {:?} func idx {:?}",
-                                    export.index,
-                                    module_idx,
-                                    func_idx
-                                );
-                                // This is safe since we assume no imported modules for now
-                                let export_name = get_export_name_from_kind_idx(
-                                    component,
-                                    module_idx,
-                                    vec![ExternalKind::Func, ExternalKind::FuncExact],
-                                    func_idx,
-                                );
-                                link_imports.insert(
-                                    core_import_idx,
-                                    ImportKind::Rename {
-                                        // The module_idx is being used for the module ID for now since we don't have nested/imported modules
-                                        package: assumed_instance_id(instance_map, module_id),
-                                        member: export_name,
-                                    },
-                                );
-                            }
-                            ResolvedCoreFunc::ResourceDrop { resource } => {
-                                let ty = component.resolve_type(resource);
-                                log::trace!("CoreFunc[{:?}] is a resource drop with type {:?}", export.index, ty);
-                                let (host_dtor, guest_dtor) = match ty {
-                                    ResolvedType::Defined(ty) => {
-                                        match ty {
-                                            ComponentType::Resource {rep: _, dtor} => {
-                                                if let Some(dtor) = dtor {
-                                                    log::error!("Dtor: {:?}", component.resolve_core_func(dtor));
-                                                    (false, None)
-                                                } else {
-                                                    (false, None)
-                                                }
-                                                //dtor.and_then(|_x| panic!("No support for guest destructor yet")))
-                                            }
-                                            _ => panic!("Only resource types supported currently for resource drop functions"),
-                                        }
-                                    }
-                                    ResolvedType::Imported(_) => {
-                                        // Host destructors called on imported resources
-                                        (true, None)
-                                    }
-                                };
-                                link_imports.insert(core_import_idx, ImportKind::Builtin(BuiltinOptions::ResourceDrop {
-                                    host_dtor,
-                                    guest_dtor,
-                                }));
-                            }
-                            ResolvedCoreFunc::ResourceRep { resource: _ } | ResolvedCoreFunc::ResourceNew { resource: _ } => {
-                                log::trace!("CoreFunc[{:?}] is a {:?}", export.index, core_func);
-                                link_imports.insert(core_import_idx, ImportKind::Builtin(BuiltinOptions::NoSideEffects));
-                            }
-                        }
+                        let import_kind = resolve_core_func_link(export.index, component, instance_map);
+                        link_imports.insert(core_import_idx, import_kind);
                     }
                     ExternalKind::Table => {
                         let table = component.resolve_core_table(export.index);

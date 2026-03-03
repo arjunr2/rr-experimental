@@ -119,10 +119,11 @@ run_test "potpourri" "test-modules/components/potpourri.wasm"
 run_test "complex_params" "test-modules/components/complex_params.wasm"
 run_test "max_flat" "test-modules/components/max_flat.wasm"
 run_test "over_max_flat" "test-modules/components/over_max_flat.wasm"
+run_test "resource_drop" "test-modules/components/resource_drop.wasm"
+run_test "resource_guest_dtor" "test-modules/components/resource_guest_dtor.wasm"
+run_test_expect_fail "resource_3" "test-modules/components/resource-3.wasm"
 #run_test "resource_1" "test-modules/components/resource-1.wasm"
 #run_test "resource_2" "test-modules/components/resource-2.wasm"
-run_test "resource_drop" "test-modules/components/resource_drop.wasm"
-run_test_expect_fail "resource_3" "test-modules/components/resource-3.wasm"
 
 # Core module tests
 echo "=== Core Module Tests ==="
