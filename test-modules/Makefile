@@ -11,7 +11,8 @@ CORE_WIT_DIR=core-componentizable/wit
 RUST_P1_TARGET_PATH=target/wasm32-wasip1/debug
 RUST_P2_TARGET_PATH=target/wasm32-wasip2/debug
 
-P1_ADAPTER=wasi_snapshot_preview1.command.wasm
+WASMTIME_DIR=../../wasmtime-rr-prototyping
+P1_ADAPTER=$(WASMTIME_DIR)/target/wasm32-unknown-unknown/release/wasi_snapshot_preview1.wasm
 
 .PHONY: all clean component-plain wasip2 wasip1 core $(RUST_TOMLS) $(RUST_LIBS)
 
@@ -29,7 +30,13 @@ wasip2: | components/wasi
 	done
 
 .ONESHELL:
-wasip1: | components/wasi
+$(P1_ADAPTER):
+	CARGO_PROFILE_RELEASE_LTO=fat cargo build -p wasi-preview1-component-adapter \
+		--manifest-path=$(WASMTIME_DIR)/Cargo.toml \
+		--target wasm32-unknown-unknown --release --no-default-features --features command
+
+.ONESHELL:
+wasip1: $(P1_ADAPTER) | components/wasi
 	for wasm in $(WASIP1_SRCS); do \
 		base=$$(basename $$wasm); \
 		wasm-tools component new $$wasm --adapt $(P1_ADAPTER) -o components/wasi/$$base; \
