@@ -1,4 +1,6 @@
-//! CLI tool to decompose a WebAssembly Component into its constituent modules.
+//! CLI tool to decompose a WebAssembly Component into its constituent modules
+//! (and potentially re-merge it back into a single core Wasm module) in an
+//! amendable format for CRIMP replay.
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, ValueEnum};
@@ -72,6 +74,16 @@ impl MergeOptions {
     }
 }
 
+impl std::fmt::Display for MergeOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MergeOptions::FullSplit => write!(f, "full-split"),
+            MergeOptions::FullMerge => write!(f, "full-merge"),
+            MergeOptions::DriverSplit => write!(f, "driver-split"),
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "decompose")]
 #[command(about = "Decompose a WebAssembly Component into its modules")]
@@ -86,7 +98,7 @@ struct CLI {
     #[arg(short = 'x', long = "overwrite")]
     overwrite: bool,
     /// Merging technique on the decomposed components with `wasm-merge` on output
-    #[arg(short, long)]
+    #[arg(short, long, default_value_t = MergeOptions::default())]
     merge: MergeOptions,
     /// When `glue` is false, writes necessary information into a custom section for replay, and relies on
     /// engine support to read this information and drive the replay accordingly.
@@ -245,6 +257,7 @@ fn merge_modules<T: AsRef<Path> + AsRef<OsStr>>(input: Vec<PathBuf>, output: T) 
 ///
 /// Relax these as we build out this tool. Currently, we stop the following:
 /// * Imported core modules
+/// * Core modules with start functions (since we do not know how to handle start functions yet in the wasm glue/driver)
 /// * Imported components
 /// * FromExport main component instances
 /// * Nested components that are imported or have modules/core instances
