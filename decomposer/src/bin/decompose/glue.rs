@@ -328,37 +328,15 @@ impl<'a> GlueBuilder<'a> {
             .map(|(i, ty)| (LocalID(i as u32), *ty))
             .collect();
 
-        let ffi_ptr = fb.add_local(DataType::I32);
-        let bytes_ptr = fb.add_local(DataType::I32);
-        let sizes_ptr = fb.add_local(DataType::I32);
-
-        // Allocate FFI buffer for params
         let total_param_bytes: u32 = params.iter().map(|ty| data_type_byte_size(ty)).sum();
         let num_params: u32 = params.len() as u32;
-        fb.i32_const(total_param_bytes as i32);
-        fb.i32_const(num_params as i32);
-        fb.call(self.allocate_args_results_buffer);
-        fb.local_set(ffi_ptr);
-
-        // Read bytes_ptr from FFI struct (offset 0)
-        fb.local_get(ffi_ptr);
-        fb.i32_load(MemArg {
-            align: 2,
-            max_align: 2,
-            offset: 0,
-            memory: driver_mem,
-        });
-        fb.local_set(bytes_ptr);
-
-        // Read sizes_ptr from FFI struct (offset 4)
-        fb.local_get(ffi_ptr);
-        fb.i32_load(MemArg {
-            align: 2,
-            max_align: 2,
-            offset: 4,
-            memory: driver_mem,
-        });
-        fb.local_set(sizes_ptr);
+        let (_ffi_ptr, bytes_ptr, sizes_ptr) = emit_alloc_ffi_buffer(
+            &mut fb,
+            total_param_bytes,
+            num_params,
+            self.allocate_args_results_buffer,
+            driver_mem,
+        );
 
         // Store each param into bytes_ptr (driver memory)
         let mut byte_offset: u64 = 0;
@@ -426,35 +404,14 @@ impl<'a> GlueBuilder<'a> {
                                 let dtor_import_id = self.next_import_id;
                                 self.next_import_id += 1;
 
-                                let dtor_ffi_ptr = fb.add_local(DataType::I32);
-                                let dtor_bytes_ptr = fb.add_local(DataType::I32);
-                                let dtor_sizes_ptr = fb.add_local(DataType::I32);
-
-                                // Allocate FFI buffer for [i32] params
-                                fb.i32_const(4); // total_param_bytes: one i32
-                                fb.i32_const(1); // num_params
-                                fb.call(self.allocate_args_results_buffer);
-                                fb.local_set(dtor_ffi_ptr);
-
-                                // Read bytes_ptr from FFI struct (offset 0)
-                                fb.local_get(dtor_ffi_ptr);
-                                fb.i32_load(MemArg {
-                                    align: 2,
-                                    max_align: 2,
-                                    offset: 0,
-                                    memory: driver_mem,
-                                });
-                                fb.local_set(dtor_bytes_ptr);
-
-                                // Read sizes_ptr from FFI struct (offset 4)
-                                fb.local_get(dtor_ffi_ptr);
-                                fb.i32_load(MemArg {
-                                    align: 2,
-                                    max_align: 2,
-                                    offset: 4,
-                                    memory: driver_mem,
-                                });
-                                fb.local_set(dtor_sizes_ptr);
+                                let (_dtor_ffi_ptr, dtor_bytes_ptr, dtor_sizes_ptr) =
+                                    emit_alloc_ffi_buffer(
+                                        &mut fb,
+                                        4, // one i32
+                                        1,
+                                        self.allocate_args_results_buffer,
+                                        driver_mem,
+                                    );
 
                                 // Store the resource rep into the dtor buffer
                                 fb.local_get(dtor_bytes_ptr);
@@ -467,14 +424,12 @@ impl<'a> GlueBuilder<'a> {
                                 });
 
                                 // Store size descriptor (4 bytes for i32)
-                                fb.local_get(dtor_sizes_ptr);
-                                fb.i32_const(4);
-                                fb.i32_store8(MemArg {
-                                    align: 0,
-                                    max_align: 0,
-                                    offset: 0,
-                                    memory: driver_mem,
-                                });
+                                emit_store_size_descriptors(
+                                    &mut fb,
+                                    &[DataType::I32],
+                                    dtor_sizes_ptr,
+                                    driver_mem,
+                                );
 
                                 // Call replay_host_call for the host destructor
                                 fb.i32_const(dtor_import_id as i32);
@@ -660,6 +615,26 @@ impl<'a> GlueBuilder<'a> {
         table_index
     }
 
+    /// Create a pair of dispatch tables (import-side indexed by `next_import_id`,
+    /// export-side indexed by max record_id + 1). Returns `(import_table_idx, export_table_idx)`.
+    fn add_import_export_table_pair(
+        &mut self,
+        import_entries: &[(u32, FunctionID)],
+        export_entries: &[(u32, FunctionID)],
+    ) -> (u32, u32) {
+        let import_table_size = self.next_import_id;
+        let import_table_idx = self.add_dispatch_table(import_table_size, import_entries);
+
+        let export_table_size = export_entries
+            .iter()
+            .map(|(id, _)| *id + 1)
+            .max()
+            .unwrap_or(0);
+        let export_table_idx = self.add_dispatch_table(export_table_size, export_entries);
+
+        (import_table_idx, export_table_idx)
+    }
+
     // ====================================
     // ==== Dispatch Function Builders ====
     // ====================================
@@ -710,19 +685,10 @@ impl<'a> GlueBuilder<'a> {
             &[DataType::I32],
         );
 
-        // Create import table (indexed by unified import_id)
         let import_entries: Vec<(u32, FunctionID)> = self.realloc_import_dispatch.clone();
-        let import_table_size = self.next_import_id;
-        let import_table_idx = self.add_dispatch_table(import_table_size, &import_entries);
-
-        // Create export table (indexed by record_id)
         let export_entries: Vec<(u32, FunctionID)> = self.realloc_export_dispatch.clone();
-        let export_table_size = export_entries
-            .iter()
-            .map(|(id, _)| *id + 1)
-            .max()
-            .unwrap_or(0);
-        let export_table_idx = self.add_dispatch_table(export_table_size, &export_entries);
+        let (import_table_idx, export_table_idx) =
+            self.add_import_export_table_pair(&import_entries, &export_entries);
 
         let mut fb = FunctionBuilder::new(
             &[
@@ -743,34 +709,16 @@ impl<'a> GlueBuilder<'a> {
         let old_align = LocalID(4);
         let new_size = LocalID(5);
 
-        // Branch on direction: 0=import, 1=export
-        // Args must be pushed inside each branch (Wasm if/else scopes the stack)
-        fb.local_get(direction);
-        fb.if_stmt(BlockType::Type(DataType::I32));
-        {
-            fb.local_get(old_addr);
-            fb.local_get(old_size);
-            fb.local_get(old_align);
-            fb.local_get(new_size);
-            fb.local_get(index);
-            fb.inject(Operator::CallIndirect {
-                type_index: *realloc_type,
-                table_index: export_table_idx,
-            });
-        }
-        fb.else_stmt();
-        {
-            fb.local_get(old_addr);
-            fb.local_get(old_size);
-            fb.local_get(old_align);
-            fb.local_get(new_size);
-            fb.local_get(index);
-            fb.inject(Operator::CallIndirect {
-                type_index: *realloc_type,
-                table_index: import_table_idx,
-            });
-        }
-        fb.end();
+        emit_direction_dispatch(
+            &mut fb,
+            direction,
+            index,
+            &[old_addr, old_size, old_align, new_size],
+            realloc_type,
+            import_table_idx,
+            export_table_idx,
+            BlockType::Type(DataType::I32),
+        );
 
         let func_id = fb.finish_module(&mut self.module);
         self.module
@@ -816,27 +764,18 @@ impl<'a> GlueBuilder<'a> {
             mem_to_wrapper.insert(**target_mem_id, wrapper_id);
         }
 
-        // Create import table
         let import_entries: Vec<(u32, FunctionID)> = self
             .memwrite_import_dispatch
             .iter()
             .map(|(idx, mem)| (*idx, mem_to_wrapper[&**mem]))
             .collect();
-        let import_table_size = self.next_import_id;
-        let import_table_idx = self.add_dispatch_table(import_table_size, &import_entries);
-
-        // Create export table
         let export_entries: Vec<(u32, FunctionID)> = self
             .memwrite_export_dispatch
             .iter()
             .map(|(idx, mem)| (*idx, mem_to_wrapper[&**mem]))
             .collect();
-        let export_table_size = export_entries
-            .iter()
-            .map(|(id, _)| *id + 1)
-            .max()
-            .unwrap_or(0);
-        let export_table_idx = self.add_dispatch_table(export_table_size, &export_entries);
+        let (import_table_idx, export_table_idx) =
+            self.add_import_export_table_pair(&import_entries, &export_entries);
 
         let mut fb = FunctionBuilder::new(
             &[
@@ -855,32 +794,16 @@ impl<'a> GlueBuilder<'a> {
         let bytes_ptr = LocalID(3);
         let num_bytes = LocalID(4);
 
-        // Branch on direction: 0=import, 1=export
-        // Args must be pushed inside each branch (Wasm if/else scopes the stack)
-        fb.local_get(direction);
-        fb.if_stmt(BlockType::Empty);
-        {
-            fb.local_get(offset);
-            fb.local_get(bytes_ptr);
-            fb.local_get(num_bytes);
-            fb.local_get(index);
-            fb.inject(Operator::CallIndirect {
-                type_index: *wrapper_type,
-                table_index: export_table_idx,
-            });
-        }
-        fb.else_stmt();
-        {
-            fb.local_get(offset);
-            fb.local_get(bytes_ptr);
-            fb.local_get(num_bytes);
-            fb.local_get(index);
-            fb.inject(Operator::CallIndirect {
-                type_index: *wrapper_type,
-                table_index: import_table_idx,
-            });
-        }
-        fb.end();
+        emit_direction_dispatch(
+            &mut fb,
+            direction,
+            index,
+            &[offset, bytes_ptr, num_bytes],
+            wrapper_type,
+            import_table_idx,
+            export_table_idx,
+            BlockType::Empty,
+        );
 
         let func_id = fb.finish_module(&mut self.module);
         self.module
@@ -918,10 +841,6 @@ impl<'a> GlueBuilder<'a> {
             let w_return_bytes_len = LocalID(1);
             let w_return_sizes_len = LocalID(2);
 
-            let w_ffi_ptr = wfb.add_local(DataType::I32);
-            let w_bytes_ptr = wfb.add_local(DataType::I32);
-            let w_sizes_ptr = wfb.add_local(DataType::I32);
-
             // Load each argument from args_ptr (driver memory)
             let mut arg_offset: u64 = 0;
             for param_ty in &params {
@@ -940,31 +859,13 @@ impl<'a> GlueBuilder<'a> {
                     wfb.local_set(*local);
                 }
 
-                // Allocate the return buffer
-                wfb.i32_const(total_bytes as i32);
-                wfb.i32_const(num_results as i32);
-                wfb.call(allocate_fn);
-                wfb.local_set(w_ffi_ptr);
-
-                // Read bytes_ptr from FFI struct (offset 0)
-                wfb.local_get(w_ffi_ptr);
-                wfb.i32_load(MemArg {
-                    align: 2,
-                    max_align: 2,
-                    offset: 0,
-                    memory: driver_mem,
-                });
-                wfb.local_set(w_bytes_ptr);
-
-                // Read sizes_ptr from FFI struct (offset 4)
-                wfb.local_get(w_ffi_ptr);
-                wfb.i32_load(MemArg {
-                    align: 2,
-                    max_align: 2,
-                    offset: 4,
-                    memory: driver_mem,
-                });
-                wfb.local_set(w_sizes_ptr);
+                let (_ffi_ptr, w_bytes_ptr, w_sizes_ptr) = emit_alloc_ffi_buffer(
+                    &mut wfb,
+                    total_bytes,
+                    num_results,
+                    allocate_fn,
+                    driver_mem,
+                );
 
                 // Store each result value into bytes_ptr
                 let mut byte_offset: u64 = 0;
@@ -1162,6 +1063,90 @@ impl<'a> GlueBuilder<'a> {
         self.module.elements = self.pending_elements;
         self.module
     }
+}
+
+// ====================================
+// ==== Codegen Helpers ====
+// ====================================
+
+/// Emit FFI buffer allocation: call `allocate_args_results_buffer(total_bytes, count)`,
+/// then load `bytes_ptr` (offset 0) and `sizes_ptr` (offset 4) from the returned struct.
+/// Returns `(ffi_ptr, bytes_ptr, sizes_ptr)` locals.
+fn emit_alloc_ffi_buffer(
+    fb: &mut FunctionBuilder,
+    total_bytes: u32,
+    count: u32,
+    allocate_fn: FunctionID,
+    driver_mem: u32,
+) -> (LocalID, LocalID, LocalID) {
+    let ffi_ptr = fb.add_local(DataType::I32);
+    let bytes_ptr = fb.add_local(DataType::I32);
+    let sizes_ptr = fb.add_local(DataType::I32);
+
+    fb.i32_const(total_bytes as i32);
+    fb.i32_const(count as i32);
+    fb.call(allocate_fn);
+    fb.local_set(ffi_ptr);
+
+    // Read bytes_ptr from FFI struct (offset 0)
+    fb.local_get(ffi_ptr);
+    fb.i32_load(MemArg {
+        align: 2,
+        max_align: 2,
+        offset: 0,
+        memory: driver_mem,
+    });
+    fb.local_set(bytes_ptr);
+
+    // Read sizes_ptr from FFI struct (offset 4)
+    fb.local_get(ffi_ptr);
+    fb.i32_load(MemArg {
+        align: 2,
+        max_align: 2,
+        offset: 4,
+        memory: driver_mem,
+    });
+    fb.local_set(sizes_ptr);
+
+    (ffi_ptr, bytes_ptr, sizes_ptr)
+}
+
+/// Emit direction-based dispatch: branch on `direction` local, push `args` locals,
+/// then `call_indirect` into the appropriate table via `index`.
+fn emit_direction_dispatch(
+    fb: &mut FunctionBuilder,
+    direction: LocalID,
+    index: LocalID,
+    args: &[LocalID],
+    call_type: TypeID,
+    import_table_idx: u32,
+    export_table_idx: u32,
+    result_block_type: BlockType,
+) {
+    fb.local_get(direction);
+    fb.if_stmt(result_block_type);
+    {
+        for arg in args {
+            fb.local_get(*arg);
+        }
+        fb.local_get(index);
+        fb.inject(Operator::CallIndirect {
+            type_index: *call_type,
+            table_index: export_table_idx,
+        });
+    }
+    fb.else_stmt();
+    {
+        for arg in args {
+            fb.local_get(*arg);
+        }
+        fb.local_get(index);
+        fb.inject(Operator::CallIndirect {
+            type_index: *call_type,
+            table_index: import_table_idx,
+        });
+    }
+    fb.end();
 }
 
 /// Byte size of a Wasm value type.
