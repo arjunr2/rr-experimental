@@ -1,0 +1,4 @@
+[env]
+CC_wasm32_wasip2 = "/opt/wasi-sdk-25.0/bin/clang"
+AR_wasm32_wasip2 = "/opt/wasi-sdk-25.0/bin/llvm-ar"
+WASI_SYSROOT = "/opt/wasi-sdk-25.0/share/wasi-sysroot"

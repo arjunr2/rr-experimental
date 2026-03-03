@@ -1,0 +1,19 @@
+[package]
+name = "wasi-modules"
+edition = "2024"
+
+[[bin]]
+name = "compressor"
+path = "compressor.rs"
+
+[[bin]]
+name = "hello_world"
+path = "hello_world.rs"
+
+[dependencies]
+anyhow = "1.0.98"
+clap = { version = "4.5.40", features = ["derive"] }
+walkdir = "2.5.0"
+zstd = "0.13.3"
+
+[workspace]
