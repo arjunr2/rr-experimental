@@ -38,6 +38,8 @@ use component_linking::*;
 mod glue;
 use glue::*;
 
+mod start_analysis;
+
 macro_rules! unsupported {
     // Single argument: unconditional error
     ($feature:expr) => {
@@ -62,7 +64,7 @@ enum MergeOptions {
     /// All decomposed modules from the component and the glue + driver
     /// are combined into a single Wasm module.
     FullMerge,
-    /// Decompose modules are merged together and glue + driver are merged together.
+    /// Decomposed modules are merged together and glue + driver are merged together.
     /// The two merged outputs are kept separate.
     DriverSplit,
 }
@@ -257,7 +259,6 @@ fn merge_modules<T: AsRef<Path> + AsRef<OsStr>>(input: Vec<PathBuf>, output: T) 
 ///
 /// Relax these as we build out this tool. Currently, we stop the following:
 /// * Imported core modules
-/// * Core modules with start functions (since we do not know how to handle start functions yet in the wasm glue/driver)
 /// * Imported components
 /// * FromExport main component instances
 /// * Nested components that are imported or have modules/core instances
@@ -280,15 +281,8 @@ fn validate_assumptions<'a>(component: &Component<'a>) -> Result<()> {
     }
 
     for module in component.modules.iter_resolved(&component) {
-        match module {
-            ResolvedModule::Imported(_) => {
-                unsupported!("Imported modules")?;
-            }
-            ResolvedModule::Defined { module } => {
-                if module.start.is_some() {
-                    unsupported!("Core modules with start functions")?;
-                }
-            }
+        if let ResolvedModule::Imported(_) = module {
+            unsupported!("Imported modules")?;
         }
     }
 
@@ -1005,6 +999,9 @@ impl<'a> ComponentDecomposed<'a> {
             export_func_modules.is_subset(&instantiated_modules),
             "Exported functions should only come from instantiated modules"
         );
+
+        // Some breeds of start functions are not yet supported... check for those
+        start_analysis::validate_start_functions(&linking)?;
 
         let (modules, glue) = if let Some(args) = glue_args {
             // Generate glue and driver bindings
