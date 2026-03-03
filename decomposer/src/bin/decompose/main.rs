@@ -19,9 +19,7 @@ use std::{fs, vec};
 
 use decomposer::Component;
 use decomposer::ir::{
-    ComponentInstanceNode, CoreInstanceNode, Resolve, ResolvedComponent,
-    ResolvedComponentFunc, ResolvedComponentInstance, ResolvedCoreFunc, ResolvedCoreInstance,
-    ResolvedImport, ResolvedModule, ResolvedType,
+    ComponentInstanceNode, ComponentType, CoreInstanceNode, Resolve, ResolvedComponent, ResolvedComponentFunc, ResolvedComponentInstance, ResolvedCoreFunc, ResolvedCoreInstance, ResolvedImport, ResolvedModule, ResolvedType
 };
 use decomposer::parse_component;
 use decomposer::wirm::Module;
@@ -269,8 +267,15 @@ fn validate_assumptions<'a>(component: &Component<'a>) -> Result<()> {
     }
 
     for module in component.modules.iter_resolved(&component) {
-        if let ResolvedModule::Imported { .. } = module {
-            unsupported!("Imported modules")?;
+        match module {
+            ResolvedModule::Imported(_) => {
+                unsupported!("Imported modules")?;
+            }
+            ResolvedModule::Defined { module } => {
+                if module.start.is_some() {
+                    unsupported!("Core modules with start functions")?;
+                }
+            }
         }
     }
 
@@ -398,8 +403,19 @@ fn gather_instance_link(
                                 let ty = component.resolve_type(resource);
                                 log::trace!("CoreFunc[{:?}] is a resource drop with type {:?}", export.index, ty);
                                 let (host_dtor, guest_dtor) = match ty {
-                                    ResolvedType::Defined(x) => {
-                                        panic!("Yet to support defined type: {:?}", x);
+                                    ResolvedType::Defined(ty) => {
+                                        match ty {
+                                            ComponentType::Resource {rep: _, dtor} => {
+                                                if let Some(dtor) = dtor {
+                                                    log::error!("Dtor: {:?}", component.resolve_core_func(dtor));
+                                                    (false, None)
+                                                } else {
+                                                    (false, None)
+                                                }
+                                                //dtor.and_then(|_x| panic!("No support for guest destructor yet")))
+                                            }
+                                            _ => panic!("Only resource types supported currently for resource drop functions"),
+                                        }
                                     }
                                     ResolvedType::Imported(_) => {
                                         // Host destructors called on imported resources
@@ -410,6 +426,10 @@ fn gather_instance_link(
                                     host_dtor,
                                     guest_dtor,
                                 }));
+                            }
+                            ResolvedCoreFunc::ResourceRep { resource: _ } | ResolvedCoreFunc::ResourceNew { resource: _ } => {
+                                log::trace!("CoreFunc[{:?}] is a {:?}", export.index, core_func);
+                                link_imports.insert(core_import_idx, ImportKind::Builtin(BuiltinOptions::NoSideEffects));
                             }
                         }
                     }

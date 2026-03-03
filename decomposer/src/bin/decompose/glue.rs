@@ -381,18 +381,12 @@ impl<'a> GlueBuilder<'a> {
         let result_ptr = fb.add_local(DataType::I32);
         fb.local_set(result_ptr);
 
-        if !results.is_empty() {
-            // Load each result from driver memory at result_ptr + offset
-            let mut offset: u64 = 0;
-            for result_ty in results {
-                fb.local_get(result_ptr);
-                offset = emit_typed_load(&mut fb, result_ty, driver_mem, offset);
-            }
-        }
-
         // Handle builtin side-effects (e.g. resource destructors)
         if let Some(builtin) = &adapter.builtin {
             match builtin {
+                BuiltinOptions::NoSideEffects => {
+                    // No side-effects, do nothing
+                }
                 BuiltinOptions::ResourceDrop {
                     host_dtor,
                     guest_dtor,
@@ -510,6 +504,15 @@ impl<'a> GlueBuilder<'a> {
                         fb.end();
                     }
                 }
+            }
+        }
+
+        if !results.is_empty() {
+            // Load each result from driver memory at result_ptr + offset
+            let mut offset: u64 = 0;
+            for result_ty in results {
+                fb.local_get(result_ptr);
+                offset = emit_typed_load(&mut fb, result_ty, driver_mem, offset);
             }
         }
 

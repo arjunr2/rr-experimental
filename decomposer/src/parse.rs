@@ -215,6 +215,9 @@ fn handle_payload<'a>(
             *depth = depth.saturating_sub(1);
         }
         CustomSection { .. } => {}
+        ComponentStartSection { .. } => {
+            panic!("Component start sections are not supported");
+        }
         _ => {
             // Other payloads we don't handle yet
         }
@@ -400,7 +403,17 @@ fn handle_canonical(component: &mut Component, canon: wasmparser::CanonicalFunct
                 .core_funcs
                 .push(CoreFuncNode::ResourceDrop { resource });
         }
-        // Other canonical functions (resource operations, etc.) - ignore for now
+        ResourceNew { resource } => {
+            component
+                .core_funcs
+                .push(CoreFuncNode::ResourceNew { resource });
+        }
+        ResourceRep { resource } => {
+            component
+                .core_funcs
+                .push(CoreFuncNode::ResourceRep { resource });
+        }
+        // Other canonical functions - not supported yet
         _ => {
             panic!("Canonical function variant not supported yet: {:?}", canon);
         }

@@ -67,6 +67,15 @@ enum State {
     },
 }
 
+/// This is governed by the component model MAX_FLAT_PARAMS (16) + 1 and MAX_RESULTS (1).
+///
+/// This is only a hint; don't rely on this for correctness
+const MAX_ARGS_COUNT: usize = 32;
+/// The bytes makes the assumption of at most 16-bytes per value (v128) in Wasm
+///
+/// This is only a hint; don't rely on this for correctness
+const MAX_ARGS_BYTES: usize = MAX_ARGS_COUNT * 16;
+
 static mut REPLAYER: MaybeUninit<ReplayBuffer> = MaybeUninit::uninit();
 /// State tracking for driving the replay state machine.
 ///
@@ -115,6 +124,18 @@ fn check_instance(
         read_checksum, expected_checksum,
         "Checksum in trace and component do not match. Ensure CHECKSUM env variable is set correctly."
     );
+}
+
+/// Move `src` into backing buffer. Returns the pointer to the bytes buffer after
+///
+/// SAFETY: This overwrites [`ARGS_RESULTS_BACKING`] which is a global.
+#[inline(always)]
+unsafe fn to_backing_args(src: RRFuncArgVals) -> *mut u8 {
+    unsafe {
+        let backing = &mut *&raw mut ARGS_RESULTS_BACKING;
+        *backing = src;
+        backing.bytes.as_mut_ptr()
+    }
 }
 
 fn throw_event_error(error: impl EventError) -> ! {
@@ -266,9 +287,7 @@ fn host_func_return(event: common_events::HostFuncReturnEvent, state: State) -> 
     match state {
         State::HostCall { import_index: _ } => unsafe {
             // Keep the event value alive by moving it into backing.
-            let backing = &mut *&raw mut ARGS_RESULTS_BACKING;
-            *backing = event.args;
-            backing.bytes.as_mut_ptr()
+            to_backing_args(event.args)
         },
         _ => panic!("Invalid state: {:?}", state),
     }
@@ -296,15 +315,25 @@ fn wasm_func_return(event: common_events::WasmFuncReturnEvent, state: State) {
 #[inline(always)]
 fn builtin_entry(event: component_events::BuiltinEntryEvent, state: State) {
     use component_events::BuiltinEntryEvent::*;
+    let validate_u32 = |val: u32| unsafe {
+        let args = RRFuncArgVals {
+            bytes: val.to_le_bytes().to_vec(),
+            sizes: vec![4],
+        };
+        args.validate(&*&raw const ARGS_RESULTS_BACKING).unwrap();
+    };
+
     match state {
-        State::BuiltinCall { .. } => match event {
-            ResourceDrop(event) => unsafe {
-                let args = RRFuncArgVals {
-                    bytes: event.idx.to_le_bytes().to_vec(),
-                    sizes: vec![4],
-                };
-                args.validate(&*&raw const ARGS_RESULTS_BACKING).unwrap();
-            },
+        State::BuiltinCall { import_index: _ } => match event {
+            ResourceDrop(event) => {
+                validate_u32(event.idx);
+            }
+            ResourceNew32(event) => {
+                validate_u32(event.rep);
+            }
+            ResourceRep32(event) => {
+                validate_u32(event.idx);
+            }
             _ => {
                 panic!("No support for builtin event {:?} yet...", event);
             }
@@ -316,35 +345,42 @@ fn builtin_entry(event: component_events::BuiltinEntryEvent, state: State) {
 #[inline(always)]
 fn builtin_return(event: component_events::BuiltinReturnEvent, state: State) -> *mut u8 {
     use component_events::BuiltinReturnEvent::*;
+    let ret_u32 = |val: u32| RRFuncArgVals {
+        bytes: val.to_le_bytes().to_vec(),
+        sizes: vec![4],
+    };
+
+    let ret_optionu32 = |val: Option<u32>| {
+        // Encode the option as 5-bytes (4-byte discrim + 4-byte index)
+        let mut renc = [0u8; 5];
+        match val {
+            Some(v) => {
+                renc[..4].copy_from_slice(&v.to_le_bytes());
+                renc[4] = 1u8; // Discriminator for Some
+            } // Encode Some as 1
+            None => {} // Encode None as 0
+        };
+        RRFuncArgVals {
+            bytes: renc.to_vec(),
+            sizes: vec![5],
+        }
+    };
+
     match state {
-        State::BuiltinCall { import_index: _ } => unsafe {
-            let args: RRFuncArgVals;
-            match event {
+        State::BuiltinCall { import_index: _ } => {
+            let args: RRFuncArgVals = match event {
                 ResourceDrop(e) => {
-                    let ret = e.ret().unwrap_or_else(|e| throw_anyhow_error(e)).0;
-                    let mut renc = [0u8; 5];
-                    match ret {
-                        Some(v) => {
-                            renc[..4].copy_from_slice(&v.to_le_bytes());
-                            renc[4] = 1u8; // Discriminator for Some
-                        } // Encode Some as 1
-                        None => {} // Encode None as 0
-                    };
-                    // Encode the option as 5-bytes (4-byte discrim + 4-byte index)
-                    args = RRFuncArgVals {
-                        bytes: renc.to_vec(),
-                        sizes: vec![5],
-                    };
+                    ret_optionu32(e.ret().unwrap_or_else(|e| throw_anyhow_error(e)).0)
                 }
+                ResourceNew32(e) => ret_u32(e.ret().unwrap_or_else(|e| throw_anyhow_error(e))),
+                ResourceRep32(e) => ret_u32(e.ret().unwrap_or_else(|e| throw_anyhow_error(e))),
                 _ => {
                     panic!("No support for builtin event {:?} yet...", event);
                 }
-            }
+            };
             // Keep the event value alive by moving it into backing.
-            let backing = &mut *&raw mut ARGS_RESULTS_BACKING;
-            *backing = args;
-            backing.bytes.as_mut_ptr()
-        },
+            unsafe { to_backing_args(args) }
+        }
 
         _ => panic!("Invalid state: {:?}", state),
     }
@@ -587,6 +623,10 @@ pub unsafe extern "C" fn run_replay() {
             .unwrap(),
         );
         (*state).write(State::Root);
+        // Set up capacity to minimize reallocations
+        let backing = &mut *&raw mut ARGS_RESULTS_BACKING;
+        backing.sizes = Vec::with_capacity(MAX_ARGS_COUNT);
+        backing.bytes = Vec::with_capacity(MAX_ARGS_BYTES);
     }
 
     let mut instance: Option<Instance> = None;

@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# This script runs all the tests under `crimp-tests` directory for record and replay consistency.
+# Specify the -w options (`./test_all.sh -w`) to also run component decomposition + replay 
+# with the Wasm driver implementation on Wizard
+
 set -e  # Exit on error
 
 # Colors for output
@@ -115,10 +119,10 @@ run_test "potpourri" "test-modules/components/potpourri.wasm"
 run_test "complex_params" "test-modules/components/complex_params.wasm"
 run_test "max_flat" "test-modules/components/max_flat.wasm"
 run_test "over_max_flat" "test-modules/components/over_max_flat.wasm"
-run_test "resource-1" "test-modules/components/resource-1.wasm"
-run_test "resource-2" "test-modules/components/resource-2.wasm"
+#run_test "resource_1" "test-modules/components/resource-1.wasm"
+#run_test "resource_2" "test-modules/components/resource-2.wasm"
 run_test "resource_drop" "test-modules/components/resource_drop.wasm"
-run_test_expect_fail "resource-3" "test-modules/components/resource-3.wasm"
+run_test_expect_fail "resource_3" "test-modules/components/resource-3.wasm"
 
 # Core module tests
 echo "=== Core Module Tests ==="

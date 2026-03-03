@@ -144,6 +144,14 @@ pub enum CoreFuncNode {
     ResourceDrop {
         resource: u32,
     },
+    /// Created by `canon resource.new`
+    ResourceNew {
+        resource: u32,
+    },
+    /// Created by `canon resource.rep`
+    ResourceRep {
+        resource: u32,
+    },
 }
 
 /// A core memory in the core memory index space.
@@ -288,6 +296,10 @@ pub enum ResolvedCoreFunc {
     },
     /// Created by `canon resource.drop`
     ResourceDrop { resource: u32 },
+    /// Created by `canon resource.new`
+    ResourceNew { resource: u32 },
+    /// Created by `canon resource.rep`
+    ResourceRep { resource: u32 },
     /// From a module's export (traced through core instance)
     FromModule { module_idx: u32, func_idx: u32 },
 }

@@ -112,6 +112,8 @@ pub enum BuiltinOptions {
         /// Whether the resource drop triggers a guest destructor, and if so, the export to call for it
         guest_dtor: Option<ModuleInstanceExport>,
     },
+    /// No additional side-effects
+    NoSideEffects,
 }
 
 /// The kind of a resolved imports when linked within the component

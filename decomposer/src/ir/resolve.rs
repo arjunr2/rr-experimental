@@ -273,7 +273,9 @@ impl<'a> Component<'a> {
                                 func_idx,
                             } => (module_idx, func_idx),
                             ResolvedCoreFunc::Lowered { .. }
-                            | ResolvedCoreFunc::ResourceDrop { .. } => {
+                            | ResolvedCoreFunc::ResourceDrop { .. }
+                            | ResolvedCoreFunc::ResourceNew { .. }
+                            | ResolvedCoreFunc::ResourceRep { .. } => {
                                 panic!(
                                     "FromExports can only export a module func for instance {:?}",
                                     instance_idx
@@ -707,6 +709,12 @@ impl<'a> Resolve<'a> for CoreFuncNode {
                 options: options.clone(),
             },
             CoreFuncNode::ResourceDrop { resource } => ResolvedCoreFunc::ResourceDrop {
+                resource: *resource,
+            },
+            CoreFuncNode::ResourceNew { resource } => ResolvedCoreFunc::ResourceNew {
+                resource: *resource,
+            },
+            CoreFuncNode::ResourceRep { resource } => ResolvedCoreFunc::ResourceRep {
                 resource: *resource,
             },
             CoreFuncNode::Aliased(alias) => Self::follow_alias(component, alias),
