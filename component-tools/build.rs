@@ -5,7 +5,7 @@ fn main() {
     let driver_mono_manifest = mono_manifest_dir
         .join("../crimp-drivers/mono/Cargo.toml")
         .canonicalize()
-        .expect("crimp-drivers/mono/Cargo.toml should exist relative to decomposer");
+        .expect("crimp-drivers/mono/Cargo.toml should exist relative to component_tools");
 
     println!(
         "cargo:rustc-env=CRIMP_DRIVER_MONO_MANIFEST={}",

@@ -2,10 +2,10 @@ use anyhow::{Error, Result, anyhow, bail};
 use std::collections::HashMap;
 use std::ops::Deref;
 
-use decomposer::wasmparser::TypeRef;
-use decomposer::wirm::Module;
-use decomposer::wirm::ir::id::{ImportsID as WirmImportsID, TypeID as WirmTypeID};
-use decomposer::wirm::ir::module::module_types::Types;
+use component_tools::wasmparser::TypeRef;
+use component_tools::wirm::Module;
+use component_tools::wirm::ir::id::{ImportsID as WirmImportsID, TypeID as WirmTypeID};
+use component_tools::wirm::ir::module::module_types::Types;
 use serde::Serialize;
 
 use crate::ComponentLinkingMetadata;

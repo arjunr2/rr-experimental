@@ -4,10 +4,10 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, ValueEnum};
-use decomposer::wasmparser::{
+use component_tools::wasmparser::{
     CanonicalOption, ComponentExternalKind, ExternalKind, InstantiationArgKind, Validator,
 };
-use decomposer::wirm::ir::module::{GetID, LocalOrImport};
+use component_tools::wirm::ir::module::{GetID, LocalOrImport};
 use env_logger;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
@@ -19,15 +19,15 @@ use std::process::Command;
 use std::rc::Rc;
 use std::{fs, vec};
 
-use decomposer::Component;
-use decomposer::ir::{
+use component_tools::Component;
+use component_tools::ir::{
     ComponentInstanceNode, ComponentType, CoreInstanceNode, Resolve, ResolvedComponent, ResolvedComponentFunc, ResolvedComponentInstance, ResolvedCoreFunc, ResolvedCoreInstance, ResolvedImport, ResolvedModule, ResolvedType
 };
-use decomposer::parse_component;
-use decomposer::wirm::Module;
-use decomposer::wirm::ir::id::FunctionID;
-use decomposer::wirm::ir::module::module_exports::Export;
-use decomposer::wirm::ir::types::CustomSection;
+use component_tools::parse_component;
+use component_tools::wirm::Module;
+use component_tools::wirm::ir::id::FunctionID;
+use component_tools::wirm::ir::module::module_exports::Export;
+use component_tools::wirm::ir::types::CustomSection;
 
 mod linking;
 use linking::*;

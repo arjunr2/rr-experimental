@@ -4,17 +4,17 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use clap::Args;
-use decomposer::wasmparser::{MemArg, MemoryType, Operator, RefType, TableType};
-use decomposer::wirm::Module;
-use decomposer::wirm::ir::function::FunctionBuilder;
-use decomposer::wirm::ir::id::{FunctionID, LocalID, MemoryID, TypeID};
-use decomposer::wirm::ir::module::module_tables::{Element, ModuleTables, Table};
-use decomposer::wirm::ir::module::module_types::Types;
-use decomposer::wirm::ir::types::{
+use component_tools::wasmparser::{MemArg, MemoryType, Operator, RefType, TableType};
+use component_tools::wirm::Module;
+use component_tools::wirm::ir::function::FunctionBuilder;
+use component_tools::wirm::ir::id::{FunctionID, LocalID, MemoryID, TypeID};
+use component_tools::wirm::ir::module::module_tables::{Element, ModuleTables, Table};
+use component_tools::wirm::ir::module::module_types::Types;
+use component_tools::wirm::ir::types::{
     BlockType, ElementItems, ElementKind, InitExpr, InitInstr, Value,
 };
-use decomposer::wirm::module_builder::AddLocal;
-use decomposer::wirm::opcode::{Inject, Opcode};
+use component_tools::wirm::module_builder::AddLocal;
+use component_tools::wirm::opcode::{Inject, Opcode};
 
 use crate::linking::{
     BuiltinOptions, Checksum, ExportFuncMetadata, ImportAdapterCrimpData, LinkingMetadata,
@@ -25,7 +25,7 @@ pub const GLUE_MODULE_NAME: &str = "crimp_glue";
 pub const DRIVER_MODULE_NAME: &str = "crimp_driver_mono";
 pub const DECOMPOSED_COMPONENT_NAME: &str = "decomposed_component";
 
-use decomposer::wirm::DataType;
+use component_tools::wirm::DataType;
 
 #[derive(Debug, Default)]
 pub struct DriverGlueModules<'a> {
@@ -92,7 +92,7 @@ impl<'a> DriverGlueModules<'a> {
         log::info!("Driver built at: {:?}", wasm_path);
         let bytes = std::fs::read(&wasm_path)?;
         // Leak the bytes so the parsed Module can borrow with 'static lifetime.
-        // This is acceptable since the decomposer is a short-lived CLI tool.
+        // This is acceptable since the `decompose` is a short-lived CLI tool.
         let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
         let mut driver = Module::parse(bytes, true, false)
             .map_err(|e| anyhow!("Failed to parse driver wasm: {:?}", e))?;

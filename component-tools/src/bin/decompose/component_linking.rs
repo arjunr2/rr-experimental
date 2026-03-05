@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 
 use crate::InstantiateOrder;
-use decomposer::ir::ComponentRef;
+use component_tools::ir::ComponentRef;
 
 /// Unique index provided to each nested component in a component
 ///

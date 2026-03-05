@@ -3,7 +3,7 @@ members = [
     "crimp-tests",
     "crimp-drivers/mono",
     "snapshot",
-    "decomposer",
+    "component-tools",
 ]
 resolver = "3"
 
