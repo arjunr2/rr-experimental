@@ -4,6 +4,7 @@ members = [
     "crimp-drivers/mono",
     "snapshot",
     "component-tools",
+    "baselines/r3",
 ]
 resolver = "3"
 
@@ -26,4 +27,5 @@ wasm-crimp = { path = "../wasmtime-rr-prototyping/crates/wasm-crimp", features =
 #wirm = { git = "https://github.com/composablesys/wirm.git" }
 wirm = "=3.0.1"
 wasmprinter = "0.244.0"
+wasm-encoder = "0.244.0"
 wat = "1.244.0"

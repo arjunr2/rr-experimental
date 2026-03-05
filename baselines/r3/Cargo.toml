@@ -1,0 +1,16 @@
+[package]
+name = "r3-baseline"
+version.workspace = true
+authors.workspace = true
+edition = "2024"
+
+[[bin]]
+name = "r3-instrument"
+path = "src/bin/instrument.rs"
+
+[dependencies]
+wirm.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+log.workspace = true
+env_logger.workspace = true
