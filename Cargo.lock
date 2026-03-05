@@ -2964,7 +2964,9 @@ dependencies = [
 
 [[package]]
 name = "wirm"
-version = "3.0.0"
+version = "3.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f28fedba74e6cac16879eb09efba566ddaad626a275c404e7c1d0d5618235c1"
 dependencies = [
  "log",
  "serde_json",
