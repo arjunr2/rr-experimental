@@ -1,19 +1,18 @@
-//! Shadow memory instrumentation for core wasm modules.
+//! Shadow memory instrumentation for wasm components.
 
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
-use wirm::ir::module::Module;
 
 #[derive(Parser)]
-#[command(name = "r3-instrument")]
-#[command(about = "Add shadow memory instrumentation to a core wasm module")]
+#[command(name = "r3-instrument-component")]
+#[command(about = "Add shadow memory instrumentation to a wasm component")]
 struct Args {
-    /// Input core wasm module (.wasm or .wat)
+    /// Input wasm component
     #[arg(short, long)]
-    module: PathBuf,
+    component: PathBuf,
 
-    /// Output instrumented wasm module
+    /// Output instrumented wasm component
     #[arg(short, long)]
     output: PathBuf,
 }
@@ -22,21 +21,20 @@ fn main() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
 
-    let raw_bytes = std::fs::read(&args.module)?;
-    // Support both .wasm (binary) and .wat (text) input
-    let wasm_bytes = wat::parse_bytes(&raw_bytes)
-        .map_err(|e| anyhow::anyhow!("wat parse error: {}", e))?;
+    let wasm_bytes = std::fs::read(&args.component)?;
 
-    let mut module = Module::parse(&wasm_bytes, true, false)
+    let mut component = wirm::ir::component::Component::parse(&wasm_bytes, true, false)
         .map_err(|e| anyhow::anyhow!("parse error: {}", e))?;
 
-    r3_baseline::instrument_shadow(&mut module)?;
+    for module in component.modules.iter_mut() {
+        r3_baseline::instrument_shadow(module)?;
+    }
 
-    let output_bytes = module
+    let output_bytes = component
         .encode()
         .map_err(|e| anyhow::anyhow!("encode error: {}", e))?;
 
-    // Validate the output module
+    // Validate the output component
     let mut validator =
         wirm::wasmparser::Validator::new_with_features(wirm::wasmparser::WasmFeatures::all());
     validator
@@ -45,7 +43,7 @@ fn main() -> Result<()> {
 
     std::fs::write(&args.output, &output_bytes)?;
     log::info!(
-        "Wrote instrumented module ({} bytes) to {:?}",
+        "Wrote instrumented component ({} bytes) to {:?}",
         output_bytes.len(),
         args.output
     );

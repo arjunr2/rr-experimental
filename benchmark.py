@@ -9,7 +9,7 @@ args = parser.parse_args()
 
 hyperfine = "hyperfine --warmup 3 --shell=none".split(' ')
 
-program_common = "--dir=data test-modules/wasi/target/wasm32-wasip2/debug/compressor.wasm --input data/uncompressed-10M --output data/compressed.bin"
+program_common = "--dir=data test-modules/components/wasi/compressor.wasm --input data/uncompressed-10M --output data/compressed.bin"
 
 subprocess.run(
         hyperfine 

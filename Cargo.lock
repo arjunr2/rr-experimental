@@ -1555,6 +1555,11 @@ dependencies = [
  "clap",
  "env_logger",
  "log",
+ "postcard",
+ "serde",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wat",
  "wirm",
 ]
 

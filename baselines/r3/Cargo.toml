@@ -8,9 +8,22 @@ edition = "2024"
 name = "r3-instrument"
 path = "src/bin/instrument.rs"
 
+[[bin]]
+name = "r3-instrument-component"
+path = "src/bin/instrument_component.rs"
+
+[[bin]]
+name = "r3-record"
+path = "src/bin/record.rs"
+
 [dependencies]
 wirm.workspace = true
+wat.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 log.workspace = true
 env_logger.workspace = true
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
+postcard = { version = "1", features = ["use-std"] }
+serde = { version = "1", features = ["derive"] }
