@@ -35,7 +35,6 @@ struct Args {
 
 struct RecordState {
     wasi: WasiP1Ctx,
-    last_import_idx: u32,
     writer: Box<dyn Write + Send>,
 }
 
@@ -66,7 +65,6 @@ fn main() -> Result<()> {
         "record_import_call",
         |mut caller: Caller<'_, RecordState>, func_idx: i32| -> Result<()> {
             let state = caller.data_mut();
-            state.last_import_idx = func_idx as u32;
             let event = R3Event::ImportCall {
                 func_idx: func_idx as u32,
             };
@@ -82,7 +80,7 @@ fn main() -> Result<()> {
         "record_memory_diff",
         |mut caller: Caller<'_, RecordState>, addr: i32, size: i32| -> Result<()> {
             let addr = addr as u32;
-            let size = size as u32;
+            let size = size as usize;
 
             let mem0 = caller
                 .get_export("memory")
@@ -93,27 +91,31 @@ fn main() -> Result<()> {
                 .and_then(|e| e.into_memory())
                 .ok_or_else(|| anyhow::anyhow!("missing shadow memory export"))?;
 
-            let data0 = mem0.data(&caller);
-            let data1 = mem1.data(&caller);
             let start = addr as usize;
-            let end = start + size as usize;
 
-            let differing: Vec<(u8, u8)> = data0[start..end]
-                .iter()
-                .zip(&data1[start..end])
-                .enumerate()
-                .filter(|(_, (a, b))| a != b)
-                .map(|(i, (a, _))| (i as u8, *a))
-                .collect();
+            // Copy both slices to stack (size is at most 16 for v128)
+            let mut buf0 = [0u8; 16];
+            let mut buf1 = [0u8; 16];
+            buf0[..size].copy_from_slice(&mem0.data(&caller)[start..start + size]);
+            buf1[..size].copy_from_slice(&mem1.data(&caller)[start..start + size]);
 
-            if !differing.is_empty() {
-                let state = caller.data_mut();
+            let mut i = 0;
+            while i < size {
+                if buf0[i] == buf1[i] {
+                    i += 1;
+                    continue;
+                }
+                let run_start = i;
+                while i < size && buf0[i] != buf1[i] {
+                    i += 1;
+                }
+                let run = &buf0[run_start..i];
+                mem1.write(&mut caller, start + run_start, run)?;
                 let event = R3Event::MemoryWrite {
-                    func_idx: state.last_import_idx,
-                    addr,
-                    data: differing,
+                    addr: addr + run_start as u32,
+                    data: run.to_vec(),
                 };
-                postcard::to_io(&event, &mut state.writer)
+                postcard::to_io(&event, &mut caller.data_mut().writer)
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
             }
             Ok(())
@@ -150,7 +152,6 @@ fn main() -> Result<()> {
 
     let state = RecordState {
         wasi,
-        last_import_idx: 0,
         writer: match &args.trace {
             Some(path) => Box::new(BufWriter::new(File::create(path)?)),
             None => Box::new(std::io::sink()),

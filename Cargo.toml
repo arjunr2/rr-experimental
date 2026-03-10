@@ -24,7 +24,6 @@ log = "0.4.28"
 wasmtime = { path= "../wasmtime-rr-prototyping/crates/wasmtime", features = ["default"] }
 wasmtime-wasi = { path = "../wasmtime-rr-prototyping/crates/wasi", features = ["default"] }
 wasm-crimp = { path = "../wasmtime-rr-prototyping/crates/wasm-crimp", features = ['std'] }
-#wirm = { git = "https://github.com/composablesys/wirm.git" }
 wirm = "=3.0.1"
 wasmprinter = "0.244.0"
 wasm-encoder = "0.244.0"

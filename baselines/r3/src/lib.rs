@@ -18,13 +18,8 @@ use std::collections::HashMap;
 #[derive(Debug, Serialize, Deserialize)]
 pub enum R3Event {
     ImportCall { func_idx: u32 },
-    /// Memory divergence: only the bytes that differ between real and shadow.
-    /// Each entry is (byte_offset_from_addr, real_value).
-    MemoryWrite {
-        func_idx: u32,
-        addr: u32,
-        data: Vec<(u8, u8)>,
-    },
+    /// Contiguous run of differing bytes from real memory at the given address.
+    MemoryWrite { addr: u32, data: Vec<u8> },
 }
 
 /// Export name for the shadow memory added by instrumentation.
