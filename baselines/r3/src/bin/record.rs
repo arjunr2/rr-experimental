@@ -7,7 +7,7 @@ use r3_baseline::{R3Event, SHADOW_MEMORY_EXPORT};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use wasmtime::{Caller, Engine, Linker, Module, Store};
+use wasmtime::{Caller, Config, Engine, Linker, Module, Store};
 use wasmtime_wasi::p1::{self, WasiP1Ctx};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
@@ -28,6 +28,10 @@ struct Args {
     #[arg(long)]
     dir: Vec<String>,
 
+    /// Enable deterministic execution (NaN canonicalization + relaxed SIMD determinism)
+    #[arg(long)]
+    deterministic: bool,
+
     /// Input instrumented core wasm module, followed by its arguments
     #[arg(required = true, allow_hyphen_values = true)]
     module_and_args: Vec<String>,
@@ -38,7 +42,8 @@ struct RecordState {
     writer: Box<dyn Write + Send>,
 }
 
-fn main() -> Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
 
@@ -51,13 +56,27 @@ fn main() -> Result<()> {
         .map(|s| s.as_str())
         .collect();
 
-    let engine = Engine::default();
-    let module = Module::from_file(&engine, module_path)?;
+    let mut config = Config::new();
+    if args.deterministic {
+        config.relaxed_simd_deterministic(true);
+        config.cranelift_nan_canonicalization(true);
+    }
+    config.async_support(true);
+    let engine = Engine::new(&config)?;
+    let module = match Engine::detect_precompiled_file(module_path)? {
+        Some(wasmtime::Precompiled::Module) => {
+            unsafe { Module::deserialize_file(&engine, module_path)? }
+        }
+        Some(wasmtime::Precompiled::Component) => {
+            anyhow::bail!("precompiled components are not supported, use a core module")
+        }
+        None => Module::from_file(&engine, module_path)?,
+    };
 
     let mut linker = Linker::<RecordState>::new(&engine);
 
     // Add WASI p1 host functions
-    p1::add_to_linker_sync(&mut linker, |s| &mut s.wasi)?;
+    p1::add_to_linker_async(&mut linker, |s| &mut s.wasi)?;
 
     // r3::record_import_call(func_idx: i32)
     linker.func_wrap(
@@ -124,6 +143,7 @@ fn main() -> Result<()> {
 
     let mut wasi_builder = WasiCtxBuilder::new();
     wasi_builder.inherit_stdio();
+    wasi_builder.allow_blocking_current_thread(true);
 
     // argv[0] = module path, followed by the wasm arguments
     let mut full_args = vec![module_path.as_str()];
@@ -159,12 +179,12 @@ fn main() -> Result<()> {
     };
 
     let mut store = Store::new(&engine, state);
-    let instance = linker.instantiate(&mut store, &module)?;
+    let instance = linker.instantiate_async(&mut store, &module).await?;
 
     let start = instance
         .get_typed_func::<(), ()>(&mut store, "_start")
         .or_else(|_| instance.get_typed_func::<(), ()>(&mut store, "main"))?;
-    start.call(&mut store, ())?;
+    start.call_async(&mut store, ()).await?;
 
     Ok(())
 }

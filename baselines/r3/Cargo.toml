@@ -27,3 +27,4 @@ wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 postcard = { version = "1", features = ["use-std"] }
 serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt", "macros"] }
