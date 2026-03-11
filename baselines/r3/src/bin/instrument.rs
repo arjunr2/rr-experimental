@@ -30,7 +30,7 @@ fn main() -> Result<()> {
     let mut module = Module::parse(&wasm_bytes, true, false)
         .map_err(|e| anyhow::anyhow!("parse error: {}", e))?;
 
-    r3_baseline::instrument_shadow(&mut module)?;
+    r3_baseline::instrument_shadow(&mut module, false)?;
 
     let output_bytes = module
         .encode()

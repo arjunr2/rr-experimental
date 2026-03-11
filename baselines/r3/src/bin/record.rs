@@ -63,9 +63,10 @@ async fn main() -> Result<()> {
     }
     config.async_support(true);
     let engine = Engine::new(&config)?;
-    let module = match Engine::detect_precompiled_file(module_path)? {
+    let wasm_bytes = std::fs::read(module_path)?;
+    let module = match Engine::detect_precompiled(&wasm_bytes) {
         Some(wasmtime::Precompiled::Module) => {
-            unsafe { Module::deserialize_file(&engine, module_path)? }
+            unsafe { Module::deserialize(&engine, &wasm_bytes)? }
         }
         Some(wasmtime::Precompiled::Component) => {
             anyhow::bail!("precompiled components are not supported, use a core module")

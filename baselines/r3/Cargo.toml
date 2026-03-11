@@ -16,6 +16,10 @@ path = "src/bin/instrument_component.rs"
 name = "r3-record"
 path = "src/bin/record.rs"
 
+[[bin]]
+name = "r3-record-component"
+path = "src/bin/record_component.rs"
+
 [dependencies]
 wirm.workspace = true
 wat.workspace = true

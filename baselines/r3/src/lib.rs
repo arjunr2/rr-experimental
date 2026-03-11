@@ -34,6 +34,7 @@ use wirm::iterator::iterator_trait::{IteratingInstrumenter, Iterator as WirmIter
 use wirm::iterator::module_iterator::ModuleIterator;
 use wirm::module_builder::AddLocal;
 use wirm::opcode::{Inject, Instrumenter, Opcode};
+use wirm::ir::types::BlockType as WirmBlockType;
 use wirm::wasmparser::{BlockType, MemArg, Operator, TypeRef};
 
 /// Get the value type on the wasm stack for a store operation.
@@ -372,11 +373,19 @@ fn get_val_local(
     }
 }
 
-/// Instrument a core module with shadow memory, record_memory_diff, and
-/// record_import_call.
-pub fn instrument_shadow(module: &mut Module) -> Result<()> {
+/// Instrument a core module with shadow memory and r3 recording.
+///
+/// When `component_mode` is false, imports `r3.record_memory_diff(addr, size)`
+/// and the host reads memory to find diff bytes.
+///
+/// When `component_mode` is true, imports `r3.record_memory_write(addr, size, lo, hi)`
+/// and a wasm-side helper function scans byte-by-byte for exact diff runs,
+/// packs them into (lo, hi) i64s, and syncs the shadow memory itself.
+///
+/// Returns `Ok(true)` if instrumentation was applied, `Ok(false)` if skipped.
+pub fn instrument_shadow(module: &mut Module, component_mode: bool) -> Result<bool> {
     if module.memories.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     // Skip modules where memory 0 is imported (e.g. WASI adapter modules).
     let has_memory_import = module
@@ -384,7 +393,7 @@ pub fn instrument_shadow(module: &mut Module) -> Result<()> {
         .iter()
         .any(|imp| matches!(imp.ty, TypeRef::Memory(_)));
     if has_memory_import {
-        return Ok(());
+        return Ok(false);
     }
     let num_local = module
         .functions
@@ -392,7 +401,7 @@ pub fn instrument_shadow(module: &mut Module) -> Result<()> {
         .filter(|f| matches!(f.kind(), FuncKind::Local(_)))
         .count();
     if num_local == 0 {
-        return Ok(());
+        return Ok(false);
     }
 
     // ---------------------------------------------------------------
@@ -421,15 +430,36 @@ pub fn instrument_shadow(module: &mut Module) -> Result<()> {
     // ---------------------------------------------------------------
     // Phase 2: Add r3 imports
     // ---------------------------------------------------------------
-    let diff_type = module.types.add_func_type(&[DataType::I32, DataType::I32], &[]);
     let call_type = module.types.add_func_type(&[DataType::I32], &[]);
 
-    let (record_memory_diff_id, diff_imp_id) = module.add_import_func(
-        "r3".to_string(),
-        "record_memory_diff".to_string(),
-        diff_type,
-    );
-    module.imports.set_name("record_memory_diff".to_string(), diff_imp_id);
+    // In component mode, import record_memory_write(i32, i32, i64, i64)
+    // In core mode, import record_memory_diff(i32, i32) — host reads memory
+    let record_memory_fn_id = if component_mode {
+        let write_type = module.types.add_func_type(
+            &[DataType::I32, DataType::I32, DataType::I64, DataType::I64],
+            &[],
+        );
+        let (id, imp_id) = module.add_import_func(
+            "r3".to_string(),
+            "record_memory_write".to_string(),
+            write_type,
+        );
+        module
+            .imports
+            .set_name("record_memory_write".to_string(), imp_id);
+        id
+    } else {
+        let diff_type = module.types.add_func_type(&[DataType::I32, DataType::I32], &[]);
+        let (id, imp_id) = module.add_import_func(
+            "r3".to_string(),
+            "record_memory_diff".to_string(),
+            diff_type,
+        );
+        module
+            .imports
+            .set_name("record_memory_diff".to_string(), imp_id);
+        id
+    };
 
     let (record_import_call_id, call_imp_id) = module.add_import_func(
         "r3".to_string(),
@@ -494,9 +524,33 @@ pub fn instrument_shadow(module: &mut Module) -> Result<()> {
     }
 
     // ---------------------------------------------------------------
+    // Phase 5b: Build __r3_scan_diff helper (component mode only)
+    // ---------------------------------------------------------------
+    // In component mode, this helper does byte-by-byte comparison between
+    // mem0 and mem1, finds contiguous runs of differing bytes, packs them
+    // into (lo: i64, hi: i64) scalars, calls record_memory_write, and
+    // syncs the shadow memory.
+    //
+    // In core mode, record_memory_diff_id points to the host import and
+    // scan_diff_id is not used (we use record_memory_fn_id directly).
+    let scan_diff_id = if component_mode {
+        Some(build_scan_diff_helper(module, record_memory_fn_id))
+    } else {
+        None
+    };
+
+    // The ID to call when a load mismatch is detected:
+    // - component mode: call the wasm helper (2 params: addr, size)
+    // - core mode: call the host import (2 params: addr, size)
+    let on_mismatch_id = scan_diff_id.unwrap_or(record_memory_fn_id);
+
+    // ---------------------------------------------------------------
     // Phase 6: Iterate all instructions (skip trampolines)
     // ---------------------------------------------------------------
-    let skip: Vec<FunctionID> = trampoline_map.values().copied().collect();
+    let mut skip: Vec<FunctionID> = trampoline_map.values().copied().collect();
+    if let Some(id) = scan_diff_id {
+        skip.push(id);
+    }
     let mut it = ModuleIterator::new(module, &skip);
 
     let mut current_func: Option<u32> = None;
@@ -587,7 +641,7 @@ pub fn instrument_shadow(module: &mut Module) -> Result<()> {
                     });
                     it.local_get(addr);
                     it.i32_const(byte_size);
-                    it.call(record_memory_diff_id);
+                    it.call(on_mismatch_id);
                     it.inject(Operator::End);
                     it.local_get(val);
                     it.finish_instr();
@@ -620,7 +674,7 @@ pub fn instrument_shadow(module: &mut Module) -> Result<()> {
                         });
                         it.local_get(addr);
                         it.i32_const(byte_size);
-                        it.call(record_memory_diff_id);
+                        it.call(on_mismatch_id);
                         it.inject(Operator::End);
                         it.local_get(result);
                         it.finish_instr();
@@ -735,5 +789,191 @@ pub fn instrument_shadow(module: &mut Module) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(true)
+}
+
+/// Build the `__r3_scan_diff(addr: i32, size: i32)` helper function.
+///
+/// Scans byte-by-byte between mem0 and mem1 at `[addr..addr+size]`, finds
+/// contiguous runs of differing bytes, packs each run into `(lo: i64, hi: i64)`,
+/// calls `record_memory_write(run_addr, run_size, lo, hi)`, and syncs the
+/// shadow memory for each differing byte.
+fn build_scan_diff_helper(module: &mut Module, record_memory_write_id: FunctionID) -> FunctionID {
+    let mem0 = MemArg {
+        align: 0,
+        offset: 0,
+        memory: 0,
+        max_align: 0,
+    };
+    let mem1 = MemArg {
+        align: 0,
+        offset: 0,
+        memory: 1,
+        max_align: 0,
+    };
+
+    // params: addr (i32), size (i32)
+    let mut fb = FunctionBuilder::new(&[DataType::I32, DataType::I32], &[]);
+    let p_addr = LocalID(0);
+    let p_size = LocalID(1);
+
+    let l_end = fb.add_local(DataType::I32); // addr + size
+    let l_i = fb.add_local(DataType::I32); // current byte offset (absolute addr)
+    let l_run_start = fb.add_local(DataType::I32); // start of current run (absolute addr)
+    let l_byte_real = fb.add_local(DataType::I32);
+    let l_byte_shadow = fb.add_local(DataType::I32);
+    let l_lo = fb.add_local(DataType::I64);
+    let l_hi = fb.add_local(DataType::I64);
+    let l_offset = fb.add_local(DataType::I32); // byte offset within run
+    let l_shift = fb.add_local(DataType::I64); // shift amount
+
+    // end = addr + size
+    fb.local_get(p_addr);
+    fb.local_get(p_size);
+    fb.i32_add();
+    fb.local_set(l_end);
+
+    // i = addr
+    fb.local_get(p_addr);
+    fb.local_set(l_i);
+
+    // block $break { loop $scan {
+    fb.block(WirmBlockType::Empty);
+    fb.loop_stmt(WirmBlockType::Empty);
+
+    // if i >= end: br $break
+    fb.local_get(l_i);
+    fb.local_get(l_end);
+    fb.i32_gte_unsigned();
+    fb.br_if(1); // break out of block
+
+    // byte_real = mem0[i]
+    fb.local_get(l_i);
+    fb.i32_load8_u(mem0);
+    fb.local_set(l_byte_real);
+
+    // byte_shadow = mem1[i]
+    fb.local_get(l_i);
+    fb.i32_load8_u(mem1);
+    fb.local_set(l_byte_shadow);
+
+    // if byte_real == byte_shadow: i++, continue
+    fb.local_get(l_byte_real);
+    fb.local_get(l_byte_shadow);
+    fb.i32_eq();
+    fb.if_stmt(WirmBlockType::Empty);
+    {
+        fb.local_get(l_i);
+        fb.i32_const(1);
+        fb.i32_add();
+        fb.local_set(l_i);
+        fb.br(1); // continue loop $scan
+    }
+    fb.end(); // end if
+
+    // Found a diff — start a run
+    fb.local_get(l_i);
+    fb.local_set(l_run_start);
+    fb.i64_const(0);
+    fb.local_set(l_lo);
+    fb.i64_const(0);
+    fb.local_set(l_hi);
+
+    // block $run_break { loop $run_loop {
+    fb.block(WirmBlockType::Empty);
+    fb.loop_stmt(WirmBlockType::Empty);
+
+    // if i >= end: br $run_break
+    fb.local_get(l_i);
+    fb.local_get(l_end);
+    fb.i32_gte_unsigned();
+    fb.br_if(1);
+
+    // byte_real = mem0[i]
+    fb.local_get(l_i);
+    fb.i32_load8_u(mem0);
+    fb.local_set(l_byte_real);
+
+    // byte_shadow = mem1[i]
+    fb.local_get(l_i);
+    fb.i32_load8_u(mem1);
+    fb.local_set(l_byte_shadow);
+
+    // if byte_real == byte_shadow: br $run_break
+    fb.local_get(l_byte_real);
+    fb.local_get(l_byte_shadow);
+    fb.i32_eq();
+    fb.br_if(1);
+
+    // offset = i - run_start
+    fb.local_get(l_i);
+    fb.local_get(l_run_start);
+    fb.i32_sub();
+    fb.local_set(l_offset);
+
+    // shift = (offset % 8) * 8 as i64
+    fb.local_get(l_offset);
+    fb.i32_const(7);
+    fb.i32_and();
+    fb.i32_const(3);
+    fb.i32_shl();
+    fb.i64_extend_i32u();
+    fb.local_set(l_shift);
+
+    // if offset < 8: lo |= (byte_real as i64) << shift
+    // else:          hi |= (byte_real as i64) << shift
+    fb.local_get(l_offset);
+    fb.i32_const(8);
+    fb.i32_lt_unsigned();
+    fb.if_stmt(WirmBlockType::Empty);
+    {
+        fb.local_get(l_lo);
+        fb.local_get(l_byte_real);
+        fb.i64_extend_i32u();
+        fb.local_get(l_shift);
+        fb.i64_shl();
+        fb.i64_or();
+        fb.local_set(l_lo);
+    }
+    fb.else_stmt();
+    {
+        fb.local_get(l_hi);
+        fb.local_get(l_byte_real);
+        fb.i64_extend_i32u();
+        fb.local_get(l_shift);
+        fb.i64_shl();
+        fb.i64_or();
+        fb.local_set(l_hi);
+    }
+    fb.end(); // end if
+
+    // Sync this byte: mem1[i] = byte_real
+    fb.local_get(l_i);
+    fb.local_get(l_byte_real);
+    fb.i32_store8(mem1);
+
+    // i++
+    fb.local_get(l_i);
+    fb.i32_const(1);
+    fb.i32_add();
+    fb.local_set(l_i);
+
+    fb.br(0); // continue $run_loop
+    fb.end(); // end loop $run_loop
+    fb.end(); // end block $run_break
+
+    // Emit record_memory_write(run_start, i - run_start, lo, hi)
+    fb.local_get(l_run_start);
+    fb.local_get(l_i);
+    fb.local_get(l_run_start);
+    fb.i32_sub();
+    fb.local_get(l_lo);
+    fb.local_get(l_hi);
+    fb.call(record_memory_write_id);
+
+    fb.br(0); // continue $scan
+    fb.end(); // end loop $scan
+    fb.end(); // end block $break
+
+    fb.finish_module(module)
 }
