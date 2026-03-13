@@ -230,6 +230,7 @@ fn optimize_module(path: &Path) -> Result<()> {
     let mut cmd = Command::new("wasm-opt");
     cmd.arg("-O4");
     cmd.arg("--all-features");
+    cmd.arg("--debuginfo");
     cmd.arg(path);
     cmd.arg("-o").arg(path);
     log::debug!("Running: {:?}", cmd);
