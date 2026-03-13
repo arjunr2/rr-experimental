@@ -9,16 +9,8 @@ name = "r3-instrument"
 path = "src/bin/instrument.rs"
 
 [[bin]]
-name = "r3-instrument-component"
-path = "src/bin/instrument_component.rs"
-
-[[bin]]
 name = "r3-record"
 path = "src/bin/record.rs"
-
-[[bin]]
-name = "r3-record-component"
-path = "src/bin/record_component.rs"
 
 [dependencies]
 wirm.workspace = true

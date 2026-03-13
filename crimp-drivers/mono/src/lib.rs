@@ -282,12 +282,20 @@ fn host_func_entry(event: common_events::HostFuncEntryEvent, state: State) {
     }
 }
 
+/// When event is None, it specifies a HostFuncReturnEmptyEvent
 #[inline(always)]
-fn host_func_return(event: common_events::HostFuncReturnEvent, state: State) -> *mut u8 {
+fn host_func_return(event: Option<common_events::HostFuncReturnEvent>, state: State) -> *mut u8 {
     match state {
         State::HostCall { import_index: _ } => unsafe {
+            let args = match event {
+                Some(e) => e.args,
+                None => RRFuncArgVals {
+                    bytes: vec![],
+                    sizes: vec![],
+                },
+            };
             // Keep the event value alive by moving it into backing.
-            to_backing_args(event.args)
+            to_backing_args(args)
         },
         _ => panic!("Invalid state: {:?}", state),
     }
@@ -516,7 +524,10 @@ pub unsafe extern "C" fn replay_host_call(
             }
             RREvent::HostFuncReturn(e) => {
                 // Done
-                return host_func_return(e, *state);
+                return host_func_return(Some(e), *state);
+            }
+            RREvent::HostFuncReturnEmptyEvent => {
+                return host_func_return(None, *state);
             }
             // Lower boundaries
             RREvent::ComponentLowerFlatEntry(e) => {
