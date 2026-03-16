@@ -4,7 +4,7 @@ platforms:
     device-name: "Macbook Pro (M4)"
     ram: "48 GB"
   nuc:
-    hostname: crimp-nuc
+    hostname: crimp-nuc11
     device-name: "Intel NUC 11 (i7-1165G7)"
     ram: "16 GB"
   aplos:
