@@ -1,0 +1,29 @@
+platforms:
+  mbp:
+    hostname: "cirrus-mbp.local"
+    device-name: "Macbook Pro (M4)"
+    ram: "48 GB"
+  nuc:
+    hostname: crimp-nuc
+    device-name: "Intel NUC 11 (i7-1165G7)"
+    ram: "16 GB"
+  aplos:
+    hostname: crimp-aplos
+    device-name: "APLOS Ryzen5-4500U"
+    ram: "8 GB"
+  milkv:
+    hostname: 192.168.20.42
+    device-name: "Milk-V DUO S"
+    ram: "512 MB"
+  rpi0:
+    hostname: crimp-pi0
+    device-name: "Raspberry Pi Zero 2W"
+    ram: "512 MB"
+  ox-128:
+    hostname: crimp-ox64.lan
+    device-name: "Pine64 Ox64 (128 Mb)"
+    ram: "64 MB"
+
+username: evaluator
+password: crimp
+
