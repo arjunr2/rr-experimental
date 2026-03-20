@@ -5,8 +5,9 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, ValueEnum};
 use component_tools::wasmparser::{
-    CanonicalOption, ComponentExternalKind, ExternalKind, InstantiationArgKind, Validator,
+    CanonicalOption, ComponentExternalKind, ExternalKind, InstantiationArgKind, Operator, Validator,
 };
+use component_tools::wirm::DataType;
 use component_tools::wirm::ir::module::{GetID, LocalOrImport};
 use env_logger;
 use sha2::{Digest, Sha256};
@@ -224,6 +225,51 @@ fn prefix_function_names(module: &mut Module<'_>) {
                 .set_local_fn_name(fid, format!("{}::func{}", prefix, *fid));
         }
     }
+}
+
+/// Instrument a module to inject `call $replay_instruction` after every `memory.grow`
+/// and `table.grow` instruction.
+///
+/// This adds an import for `replay_instruction` from `crimp_glue` with signature `(i32) -> (i32)`,
+/// then walks all local function bodies and inserts a call after each grow instruction.
+/// The replay_instruction function replaces the grow result on the stack with the recorded value.
+fn instrument_grow_instructions(module: &mut Module<'_>) -> Result<()> {
+    let replay_type = module
+        .types
+        .add_func_type(&[DataType::I32], &[DataType::I32]);
+    let (replay_func_id, _) = module.add_import_func(
+        GLUE_MODULE_NAME.to_string(),
+        "replay_instruction".to_string(),
+        replay_type,
+    );
+
+    let fids: Vec<FunctionID> = module
+        .functions
+        .iter()
+        .filter(|f| f.is_local())
+        .map(|f| FunctionID(f.get_id()))
+        .collect();
+
+    for fid in fids {
+        let local_fn = module.functions.unwrap_local_mut(fid)?;
+        let ops = local_fn.body.instructions.get_ops_mut()?;
+        let mut new_ops = Vec::with_capacity(ops.len());
+        for op in ops.drain(..) {
+            let needs_replay = matches!(
+                &op,
+                Operator::MemoryGrow { .. } | Operator::TableGrow { .. }
+            );
+            new_ops.push(op);
+            if needs_replay {
+                new_ops.push(Operator::Call {
+                    function_index: *replay_func_id,
+                });
+            }
+        }
+        *ops = new_ops;
+    }
+
+    Ok(())
 }
 
 fn optimize_module(path: &Path) -> Result<()> {
@@ -1031,7 +1077,12 @@ impl<'a> ComponentDecomposed<'a> {
             let crimp_modules = linking
                 .instantiations
                 .keys()
-                .map(|instance_id| linking.adapt_and_update_glue(*instance_id, &mut builder))
+                .map(|instance_id| {
+                    let mut module =
+                        linking.adapt_and_update_glue(*instance_id, &mut builder)?;
+                    instrument_grow_instructions(&mut module)?;
+                    Ok(module)
+                })
                 .collect::<Result<Vec<_>>>()?;
             (
                 crimp_modules,

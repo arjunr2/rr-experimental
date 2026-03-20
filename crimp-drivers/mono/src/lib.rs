@@ -606,6 +606,46 @@ pub unsafe extern "C" fn replay_builtin_call(
     unreachable!("Builtin function call did not encounter a return event!");
 }
 
+/// Validate the return value of an instrumented Wasm instruction (e.g. `memory.grow`)
+/// against the next event in the trace.
+///
+/// This is called by the glue module during Wasm execution whenever an instrumented
+/// instruction completes. The driver reads the next trace event and validates that
+/// the actual result matches the recorded result.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn replay_instruction(result: u32) -> u32 {
+    let event = access!(REPLAYER)
+        .next()
+        .expect("Expected an event in replay_instruction but reached end of trace")
+        .unwrap();
+    match event {
+        RREvent::MemoryGrow(e) => {
+            if e.result != result {
+                log::warn!(
+                    "replay_instruction(MemoryGrow): recorded value {} differs from actual value {}",
+                    e.result, result
+                );
+            }
+            e.result
+        }
+        RREvent::TableGrow(e) => {
+            if e.result != result {
+                log::warn!(
+                    "replay_instruction(TableGrow): recorded value {} differs from actual value {}",
+                    e.result, result
+                );
+            }
+            e.result
+        }
+        _ => {
+            panic!(
+                "Expected MemoryGrow or TableGrow event in replay_instruction, got {:?}",
+                event
+            );
+        }
+    }
+}
+
 /// The main entrypoint for the replay driver, intended to be called from the Wasm engine
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn run_replay() {

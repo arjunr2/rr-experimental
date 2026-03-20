@@ -126,6 +126,7 @@ pub struct GlueBuilder<'a> {
     driver_memory: MemoryID,
     replay_host_call: FunctionID,
     replay_builtin_call: FunctionID,
+    replay_instruction: FunctionID,
     allocate_args_results_buffer: FunctionID,
 
     // Dedup caches for component imports
@@ -188,6 +189,14 @@ impl<'a> GlueBuilder<'a> {
             "replay_builtin_call".to_string(),
             replay_builtin_type,
         );
+        // replay_instruction: (result: i32) -> i32 (returns recorded value)
+        let replay_instruction_type =
+            module.types.add_func_type(&[DataType::I32], &[DataType::I32]);
+        let (replay_instruction, _) = module.add_import_func(
+            DRIVER_MODULE_NAME.to_string(),
+            "replay_instruction".to_string(),
+            replay_instruction_type,
+        );
 
         // Import allocate_args_results_buffer from driver: (i32, i32) -> i32 (returns pointer to RRFuncArgValsFFI)
         let allocate_args_results_buffer_type = module
@@ -205,6 +214,7 @@ impl<'a> GlueBuilder<'a> {
             driver_memory,
             replay_host_call,
             replay_builtin_call,
+            replay_instruction,
             allocate_args_results_buffer,
             next_import_id: 0,
             imported_memories: HashMap::new(),
@@ -1040,6 +1050,25 @@ impl<'a> GlueBuilder<'a> {
             .add_export_func("dispatch_post_return".to_string(), *func_id);
     }
 
+    /// Build `replay_instruction(result: i32) -> i32`.
+    /// Passthrough that forwards the instruction result to the driver for validation
+    /// and returns the original value.
+    fn build_replay_instruction(&mut self) {
+        let mut fb = FunctionBuilder::new(&[DataType::I32], &[DataType::I32]);
+        fb.set_name("replay_instruction".to_string());
+        let result = LocalID(0);
+
+        // Call the driver's replay_instruction to validate
+        fb.local_get(result);
+        fb.call(self.replay_instruction);
+        // Return the recorded result instead of current result
+
+        let func_id = fb.finish_module(&mut self.module);
+        self.module
+            .exports
+            .add_export_func("replay_instruction".to_string(), *func_id);
+    }
+
     // ====================
     // ==== Finish ====
     // ====================
@@ -1053,6 +1082,7 @@ impl<'a> GlueBuilder<'a> {
             self.imported_memories.keys().collect::<Vec<_>>()
         );
         self.build_get_sha256_checksum();
+        self.build_replay_instruction();
         self.build_dispatch_realloc();
         self.build_dispatch_memory_write();
         self.build_dispatch_post_return();
