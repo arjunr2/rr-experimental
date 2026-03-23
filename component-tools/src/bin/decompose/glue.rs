@@ -127,6 +127,7 @@ pub struct GlueBuilder<'a> {
     replay_host_call: FunctionID,
     replay_builtin_call: FunctionID,
     replay_instruction: FunctionID,
+    init_replayer: FunctionID,
     allocate_args_results_buffer: FunctionID,
 
     // Dedup caches for component imports
@@ -197,6 +198,13 @@ impl<'a> GlueBuilder<'a> {
             "replay_instruction".to_string(),
             replay_instruction_type,
         );
+        // init_replayer: () -> ()
+        let init_replayer_type = module.types.add_func_type(&[], &[]);
+        let (init_replayer, _) = module.add_import_func(
+            DRIVER_MODULE_NAME.to_string(),
+            "init_replayer".to_string(),
+            init_replayer_type,
+        );
 
         // Import allocate_args_results_buffer from driver: (i32, i32) -> i32 (returns pointer to RRFuncArgValsFFI)
         let allocate_args_results_buffer_type = module
@@ -215,6 +223,7 @@ impl<'a> GlueBuilder<'a> {
             replay_host_call,
             replay_builtin_call,
             replay_instruction,
+            init_replayer,
             allocate_args_results_buffer,
             next_import_id: 0,
             imported_memories: HashMap::new(),
@@ -1050,6 +1059,18 @@ impl<'a> GlueBuilder<'a> {
             .add_export_func("dispatch_post_return".to_string(), *func_id);
     }
 
+    /// Build `init_replayer() -> ()`.
+    /// Passthrough that forwards to the driver's init_replayer.
+    fn build_init_replayer(&mut self) {
+        let mut fb = FunctionBuilder::new(&[], &[]);
+        fb.set_name("init_replayer".to_string());
+        fb.call(self.init_replayer);
+        let func_id = fb.finish_module(&mut self.module);
+        self.module
+            .exports
+            .add_export_func("init_replayer".to_string(), *func_id);
+    }
+
     /// Build `replay_instruction(result: i32) -> i32`.
     /// Passthrough that forwards the instruction result to the driver for validation
     /// and returns the original value.
@@ -1082,6 +1103,7 @@ impl<'a> GlueBuilder<'a> {
             self.imported_memories.keys().collect::<Vec<_>>()
         );
         self.build_get_sha256_checksum();
+        self.build_init_replayer();
         self.build_replay_instruction();
         self.build_dispatch_realloc();
         self.build_dispatch_memory_write();

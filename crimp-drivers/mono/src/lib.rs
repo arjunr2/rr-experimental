@@ -92,6 +92,13 @@ static mut ARGS_RESULTS_BACKING: RRFuncArgVals = RRFuncArgVals {
     sizes: vec![],
 };
 
+/// Initialize the replayer state: open the trace file, read the trace signature,
+/// consume instantiation events, and set up global state.
+///
+/// This can be called independently before driving events manually,
+/// or it is called by [`run_replay`] at the start.
+static mut INITIALIZED: bool = false;
+
 macro_rules! access (
     ($global:ident) => (
         unsafe {
@@ -623,7 +630,8 @@ pub unsafe extern "C" fn replay_instruction(result: u32) -> u32 {
             if e.result != result {
                 log::warn!(
                     "replay_instruction(MemoryGrow): recorded value {} differs from actual value {}",
-                    e.result, result
+                    e.result,
+                    result
                 );
             }
             e.result
@@ -632,7 +640,8 @@ pub unsafe extern "C" fn replay_instruction(result: u32) -> u32 {
             if e.result != result {
                 log::warn!(
                     "replay_instruction(TableGrow): recorded value {} differs from actual value {}",
-                    e.result, result
+                    e.result,
+                    result
                 );
             }
             e.result
@@ -646,9 +655,18 @@ pub unsafe extern "C" fn replay_instruction(result: u32) -> u32 {
     }
 }
 
-/// The main entrypoint for the replay driver, intended to be called from the Wasm engine
+/// The initialization routine for the replay driver
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn run_replay() {
+pub unsafe extern "C" fn init_replayer() {
+    // Ensure initialization only happens once, since this method can be called independently
+    // from run_replay
+    unsafe {
+        if *&raw const INITIALIZED {
+            return;
+        }
+        *&raw mut INITIALIZED = true;
+    }
+
     env_logger::init();
     log::debug!("Trace file: {:?}", TRACE_FILEPATH);
     let filepath = TRACE_FILEPATH.expect("TRACE_FILEPATH environment variable not set. Please set it to the path of the trace file to replay.");
@@ -680,11 +698,34 @@ pub unsafe extern "C" fn run_replay() {
         backing.bytes = Vec::with_capacity(MAX_ARGS_BYTES);
     }
 
-    let mut instance: Option<Instance> = None;
+    // Read and validate the instantiation event
     let mut expected_checksum: [u8; 32] = Default::default();
     unsafe {
         get_sha256_checksum(expected_checksum.as_mut_ptr());
     }
+    let mut instance: Option<Instance> = None;
+    let event = access!(REPLAYER)
+        .next()
+        .expect("Expected instantiation event but reached end of trace")
+        .unwrap();
+    match event {
+        RREvent::ComponentInstantiation(e) => {
+            component_instantiation(e, State::Root, &mut instance, expected_checksum);
+        }
+        RREvent::CoreWasmInstantiation(e) => {
+            core_wasm_instantiation(e, State::Root, &mut instance, expected_checksum);
+        }
+        _ => panic!(
+            "Expected instantiation event after trace signature, got {:?}",
+            event
+        ),
+    }
+}
+
+/// The main entrypoint for the replay driver, intended to be called from the Wasm engine
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn run_replay() {
+    unsafe { init_replayer() };
 
     let state = access!(STATE);
 
@@ -694,13 +735,6 @@ pub unsafe extern "C" fn run_replay() {
     while let Some(event_res) = access!(REPLAYER).next() {
         let event = event_res.unwrap();
         match event {
-            // Instantiation events
-            RREvent::ComponentInstantiation(e) => {
-                component_instantiation(e, *state, &mut instance, expected_checksum);
-            }
-            RREvent::CoreWasmInstantiation(e) => {
-                core_wasm_instantiation(e, *state, &mut instance, expected_checksum);
-            }
             // Host to Wasm function call events (component)
             RREvent::ComponentWasmFuncBegin(e) => {
                 let export_index = component_wasm_func_begin(e, *state);
@@ -756,9 +790,12 @@ pub unsafe extern "C" fn run_replay() {
             }
         }
     }
-    // Cleanup the replayer state
-    unsafe {
-        (*replayer).assume_init_drop();
-    }
+    deinit_replayer();
     log::info!("Replay completed successfully!");
+}
+
+fn deinit_replayer() {
+    unsafe {
+        (*std::ptr::addr_of_mut!(REPLAYER)).assume_init_drop();
+    }
 }

@@ -233,6 +233,28 @@ fn prefix_function_names(module: &mut Module<'_>) {
 /// This adds an import for `replay_instruction` from `crimp_glue` with signature `(i32) -> (i32)`,
 /// then walks all local function bodies and inserts a call after each grow instruction.
 /// The replay_instruction function replaces the grow result on the stack with the recorded value.
+/// If the module has a start function, inject a `call $init_replayer` at its beginning
+/// so the driver is initialized before any instrumented instructions run.
+fn instrument_start_function(module: &mut Module<'_>) -> Result<()> {
+    if let Some(start_fid) = module.start {
+        let init_type = module.types.add_func_type(&[], &[]);
+        let (init_func_id, _) = module.add_import_func(
+            GLUE_MODULE_NAME.to_string(),
+            "init_replayer".to_string(),
+            init_type,
+        );
+        let local_fn = module.functions.unwrap_local_mut(start_fid)?;
+        let ops = local_fn.body.instructions.get_ops_mut()?;
+        ops.insert(
+            0,
+            Operator::Call {
+                function_index: *init_func_id,
+            },
+        );
+    }
+    Ok(())
+}
+
 fn instrument_grow_instructions(module: &mut Module<'_>) -> Result<()> {
     let replay_type = module
         .types
@@ -1080,6 +1102,7 @@ impl<'a> ComponentDecomposed<'a> {
                 .map(|instance_id| {
                     let mut module =
                         linking.adapt_and_update_glue(*instance_id, &mut builder)?;
+                    instrument_start_function(&mut module)?;
                     instrument_grow_instructions(&mut module)?;
                     Ok(module)
                 })
