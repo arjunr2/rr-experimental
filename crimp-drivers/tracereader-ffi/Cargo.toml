@@ -1,10 +1,12 @@
 [package]
-name = "crimp-tracereader"
+name = "crimp-glue-tracereader"
 edition = "2024"
 version.workspace = true
 authors.workspace = true
 
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
 [dependencies]
 wasm-crimp.workspace = true
 anyhow.workspace = true
-clap.workspace = true

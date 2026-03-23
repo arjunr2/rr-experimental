@@ -2,6 +2,7 @@
 members = [
     "crimp-tests",
     "crimp-drivers/mono",
+    "crimp-drivers/tracereader",
     "snapshot",
     "component-tools",
     "baselines/r3",
