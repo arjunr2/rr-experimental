@@ -387,14 +387,17 @@ pub fn instrument_shadow(module: &mut Module, component_mode: bool) -> Result<bo
     if module.memories.is_empty() {
         return Ok(false);
     }
-    // Skip modules where memory 0 is imported (e.g. WASI adapter modules).
-    let has_memory_import = module
+    // Detect if memory 0 is imported (for shadow memory wiring).
+    let memory_import_module: Option<String> = module
         .imports
         .iter()
-        .any(|imp| matches!(imp.ty, TypeRef::Memory(_)));
-    if has_memory_import {
-        return Ok(false);
-    }
+        .find_map(|imp| {
+            if matches!(imp.ty, TypeRef::Memory(_)) {
+                Some(imp.module.to_string())
+            } else {
+                None
+            }
+        });
     let num_local = module
         .functions
         .iter()
@@ -476,10 +479,20 @@ pub fn instrument_shadow(module: &mut Module, component_mode: bool) -> Result<bo
         .get_mem_by_id(MemoryID(0))
         .ok_or_else(|| anyhow::anyhow!("no memory 0"))?
         .ty;
-    let shadow_id = module.add_local_memory(mem0_ty);
-    module
-        .exports
-        .add_export_mem(SHADOW_MEMORY_EXPORT.to_string(), *shadow_id);
+    if memory_import_module.is_some() {
+        // Memory 0 is imported — import shadow from the "r3" instance.
+        module.add_import_memory(
+            "r3".to_string(),
+            SHADOW_MEMORY_EXPORT.to_string(),
+            mem0_ty,
+        );
+    } else {
+        // Memory 0 is local — add local shadow + export.
+        let shadow_id = module.add_local_memory(mem0_ty);
+        module
+            .exports
+            .add_export_mem(SHADOW_MEMORY_EXPORT.to_string(), *shadow_id);
+    }
 
     // ---------------------------------------------------------------
     // Phase 4: Create trampoline wrappers for each original import
