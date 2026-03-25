@@ -37,7 +37,7 @@ use imports::*;
 #[cfg(feature = "multi-component")]
 compile_error!("Multi-component support is not yet implemented in the Wasm replay driver.");
 
-const TRACE_FILEPATH: Option<&str> = option_env!("TRACE_FILEPATH");
+const TRACE_FILEPATH_ENV: Option<&str> = option_env!("TRACE_FILEPATH");
 const DESERIALIZE_BUFFER_SIZE: Option<&str> = option_env!("DESERIALIZE_BUFFER_SIZE"); // 1 MiB buffer for deserialization
 
 // ===================================================================================
@@ -668,8 +668,16 @@ pub unsafe extern "C" fn init_replayer() {
     }
 
     env_logger::init();
-    log::debug!("Trace file: {:?}", TRACE_FILEPATH);
-    let filepath = TRACE_FILEPATH.expect("TRACE_FILEPATH environment variable not set. Please set it to the path of the trace file to replay.");
+
+    // Prefer CLI arg (first arg after program name), fall back to compile-time env
+    let args: Vec<String> = std::env::args().collect();
+    let filepath = args
+        .get(1)
+        .map(|s| s.as_str())
+        .or(TRACE_FILEPATH_ENV)
+        .expect("Usage: <program> <trace-file-path> (or compile with TRACE_FILEPATH env set)");
+
+    log::debug!("Trace file: {:?}", filepath);
     let file = File::open(filepath).expect("Failed to open trace file");
 
     let replayer = std::ptr::addr_of_mut!(REPLAYER);

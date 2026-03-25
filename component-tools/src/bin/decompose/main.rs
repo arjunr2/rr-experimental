@@ -1110,7 +1110,7 @@ impl<'a> ComponentDecomposed<'a> {
             (
                 crimp_modules,
                 Some(DriverGlueModules::from_path_and_builder(
-                    args.trace_path.unwrap(),
+                    args.trace_path,
                     builder,
                 )?),
             )
@@ -1322,9 +1322,6 @@ impl<'a> ComponentDecomposed<'a> {
 fn main() -> Result<()> {
     env_logger::init();
     let cli = CLI::parse();
-    if cli.glue ^ cli.glue_args.trace_path.is_some() {
-        bail!("Glue args must be provided when glue is enabled, and vice versa");
-    }
     if matches!(cli.merge, MergeOptions::DriverSplit) && !cli.glue {
         bail!("DriverSplit merge mode requires --glue to be enabled");
     }

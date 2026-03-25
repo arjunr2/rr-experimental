@@ -36,22 +36,30 @@ pub struct DriverGlueModules<'a> {
 impl<'a> DriverGlueModules<'a> {
     /// Build the crimp-driver targeting wasm32-wasip1 with the given trace path,
     /// parse the resulting .wasm into a Module, and finalize the glue module from the builder.
-    pub fn from_path_and_builder(trace_path: PathBuf, builder: GlueBuilder<'a>) -> Result<Self> {
+    pub fn from_path_and_builder(
+        trace_path: Option<PathBuf>,
+        builder: GlueBuilder<'a>,
+    ) -> Result<Self> {
         let driver_manifest = PathBuf::from(env!("CRIMP_DRIVER_MONO_MANIFEST"));
-        let trace_path = trace_path
-            .canonicalize()
-            .map_err(|e| anyhow!("Failed to canonicalize trace path: {}", e))?;
+        let trace_path_str = match trace_path {
+            Some(t) => t
+                .canonicalize()
+                .map_err(|e| anyhow!("Failed to canonicalize trace path: {}", e))?
+                .to_string_lossy()
+                .into_owned(),
+            None => String::new(),
+        };
 
         log::info!(
             "Building crimp-glue-driver with TRACE_FILEPATH={:?}, manifest={:?}",
-            trace_path,
+            trace_path_str,
             driver_manifest
         );
 
         let messages = escargot::CargoBuild::new()
             .manifest_path(&driver_manifest)
             .target("wasm32-wasip1")
-            .env("TRACE_FILEPATH", &trace_path)
+            .env("TRACE_FILEPATH", &trace_path_str)
             .release()
             .exec()
             .map_err(|e| anyhow!("Failed to run cargo build: {}", e))?;
@@ -191,8 +199,9 @@ impl<'a> GlueBuilder<'a> {
             replay_builtin_type,
         );
         // replay_instruction: (result: i32) -> i32 (returns recorded value)
-        let replay_instruction_type =
-            module.types.add_func_type(&[DataType::I32], &[DataType::I32]);
+        let replay_instruction_type = module
+            .types
+            .add_func_type(&[DataType::I32], &[DataType::I32]);
         let (replay_instruction, _) = module.add_import_func(
             DRIVER_MODULE_NAME.to_string(),
             "replay_instruction".to_string(),
