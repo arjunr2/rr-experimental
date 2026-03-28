@@ -1,0 +1,315 @@
+{
+  "metadata": {
+    "description": "Offloading Benchmarks Results",
+    "dimensions": "5 devices x 6 benchmarks x 6 variants",
+    "runs": {
+      "non_threaded": "5 runs each (5 for milkv-duo)",
+      "threaded": "5 runs (3 for milkv-duo)"
+    },
+    "aggregation": "median",
+    "recording_parameters": {
+      "non_threaded": "buffer-size=8192",
+      "threaded": "buffer-size=8192,threaded,channels=128"
+    },
+    "devices": {
+      "mac-mini": "mac",
+      "nuc11": "nuc",
+      "aplos": "aplos",
+      "pi0": "rpi0",
+      "milkv-duo": "milkv"
+    },
+    "device_order": ["mac-mini", "aplos", "nuc11", "pi0", "milkv-duo"],
+    "benchmarks": {
+      "compress-l3": "zstd-compress",
+      "sort-10k": "ext-sort",
+      "regex-redux": "regex",
+      "json-process": "py-json",
+      "speedtest1": "sql-speedtest1",
+      "blake3": "blake3"
+    },
+    "replay-variants": {
+      "wt-replay": "wasmtime-native",
+      "decomposed-wt": "wasmtime-wasm",
+      "wizeng": "wizeng-wasm"
+    },
+    "socat-replay-variants": {
+      "socat+replay": "wasmtime-native",
+      "socat+decomposed-wt": "wasmtime-wasm",
+      "socat+wizeng": "wizeng-wasm"
+    }
+  },
+  "non_threaded": {
+    "compress-l3": {
+      "time_s": {
+        "native":                { "mac-mini": 0.152, "nuc11": 0.517, "aplos": 0.132, "pi0": 13.401, "milkv-duo": 12.501 },
+        "no-rec":                { "mac-mini": 0.667, "nuc11": 2.099, "aplos": 0.320, "pi0": 18.337, "milkv-duo": 15.032 },
+        "devnull":               { "mac-mini": 1.182, "nuc11": 2.765, "aplos": 0.979, "pi0": 21.914, "milkv-duo": 40.707 },
+        "socat+wizeng":          { "mac-mini": 3.146, "nuc11": 5.311, "aplos": 3.154, "pi0": 28.857, "milkv-duo": 85.437 },
+        "socat+replay":          { "mac-mini": 1.235, "nuc11": 5.282, "aplos": 1.115, "pi0": 29.216, "milkv-duo": 85.042 },
+        "socat+decomposed-wt":   { "mac-mini": 1.535, "nuc11": 5.278, "aplos": 1.305, "pi0": 29.055, "milkv-duo": 85.306 }
+      },
+      "trace_size_mb":           { "mac-mini": 96.9, "nuc11": 96.9, "aplos": 96.9, "pi0": 96.9, "milkv-duo": 96.9 },
+      "trace_peak_mb_s":         { "mac-mini": 182.2, "nuc11": 65.2, "aplos": 125.4, "pi0": 8.1, "milkv-duo": 3.3 },
+      "trace_avg_mb_s":          { "mac-mini": 80.4, "nuc11": 34.9, "aplos": 91.1, "pi0": 4.3, "milkv-duo": 2.4 }
+    },
+    "sort-10k": {
+      "time_s": {
+        "native":                { "mac-mini": 0.425, "nuc11": 0.614, "aplos": 0.555, "pi0": 20.153, "milkv-duo": 26.697 },
+        "no-rec":                { "mac-mini": 0.952, "nuc11": 3.744, "aplos": 1.572, "pi0": 29.183, "milkv-duo": 57.234 },
+        "devnull":               { "mac-mini": 3.056, "nuc11": 8.266, "aplos": 4.116, "pi0": 69.797, "milkv-duo": 225.658 },
+        "socat+wizeng":          { "mac-mini": 8.022, "nuc11": 28.583, "aplos": 8.006, "pi0": 82.709, "milkv-duo": 354.169 },
+        "socat+replay":          { "mac-mini": 2.756, "nuc11": 27.604, "aplos": 3.981, "pi0": 81.971, "milkv-duo": 350.460 },
+        "socat+decomposed-wt":   { "mac-mini": 3.429, "nuc11": 27.646, "aplos": 4.174, "pi0": 82.914, "milkv-duo": 353.640 }
+      },
+      "trace_size_mb":           { "mac-mini": 218.2, "nuc11": 218.2, "aplos": 218.2, "pi0": 218.2, "milkv-duo": 218.2 },
+      "trace_peak_mb_s":         { "mac-mini": 129.1, "nuc11": 42.7, "aplos": 89.0, "pi0": 6.1, "milkv-duo": 2.5 },
+      "trace_avg_mb_s":          { "mac-mini": 71.5, "nuc11": 26.4, "aplos": 51.9, "pi0": 3.1, "milkv-duo": 1.0 }
+    },
+    "regex-redux": {
+      "time_s": {
+        "native":                { "mac-mini": 0.090, "nuc11": 0.101, "aplos": 0.131, "pi0": 1.873, "milkv-duo": 5.723 },
+        "no-rec":                { "mac-mini": 0.364, "nuc11": 0.304, "aplos": 0.365, "pi0": 5.527, "milkv-duo": 10.480 },
+        "devnull":               { "mac-mini": 0.391, "nuc11": 0.336, "aplos": 0.418, "pi0": 6.265, "milkv-duo": 12.062 },
+        "socat+wizeng":          { "mac-mini": 0.699, "nuc11": 0.601, "aplos": 0.508, "pi0": 7.803, "milkv-duo": 12.853 },
+        "socat+replay":          { "mac-mini": 0.448, "nuc11": 0.379, "aplos": 0.443, "pi0": 7.793, "milkv-duo": 12.915 },
+        "socat+decomposed-wt":   { "mac-mini": 0.491, "nuc11": 0.432, "aplos": 0.440, "pi0": 7.819, "milkv-duo": 12.874 }
+      },
+      "trace_size_mb":           { "mac-mini": 9.7, "nuc11": 9.7, "aplos": 9.7, "pi0": 9.7, "milkv-duo": 9.7 },
+      "trace_peak_mb_s":         { "mac-mini": 370.2, "nuc11": 310.7, "aplos": 203.3, "pi0": 17.1, "milkv-duo": 7.5 },
+      "trace_avg_mb_s":          { "mac-mini": 23.1, "nuc11": 28.7, "aplos": 23.1, "pi0": 1.5, "milkv-duo": 0.8 }
+    },
+    "json-process": {
+      "time_s": {
+        "native":                { "mac-mini": 1.319, "nuc11": 2.499, "aplos": 2.031, "pi0": 27.288, "milkv-duo": 117.249 },
+        "no-rec":                { "mac-mini": 5.530, "nuc11": 3.334, "aplos": 3.747, "pi0": 49.721, "milkv-duo": 233.563 },
+        "devnull":               { "mac-mini": 5.725, "nuc11": 3.616, "aplos": 3.937, "pi0": 53.718, "milkv-duo": 228.169 },
+        "socat+wizeng":          { "mac-mini": 6.988, "nuc11": 5.081, "aplos": 5.030, "pi0": 61.745, "milkv-duo": 239.278 },
+        "socat+replay":          { "mac-mini": 5.906, "nuc11": 4.147, "aplos": 4.146, "pi0": 61.837, "milkv-duo": 240.945 },
+        "socat+decomposed-wt":   { "mac-mini": 6.248, "nuc11": 4.432, "aplos": 4.307, "pi0": 61.868, "milkv-duo": 240.782 }
+      },
+      "trace_size_mb":           { "mac-mini": 45.0, "nuc11": 45.0, "aplos": 45.0, "pi0": 45.0, "milkv-duo": 45.0 },
+      "trace_peak_mb_s":         { "mac-mini": 332.1, "nuc11": 311.5, "aplos": 227.8, "pi0": 17.1, "milkv-duo": 7.7 },
+      "trace_avg_mb_s":          { "mac-mini": 7.4, "nuc11": 11.9, "aplos": 10.9, "pi0": 0.8, "milkv-duo": 0.2 }
+    },
+    "speedtest1": {
+      "time_s": {
+        "native":                { "mac-mini": 0.179, "nuc11": 0.302, "aplos": 0.213, "pi0": 3.184, "milkv-duo": 6.862 },
+        "no-rec":                { "mac-mini": 1.109, "nuc11": 4.689, "aplos": 0.796, "pi0": 13.403, "milkv-duo": 36.544 },
+        "devnull":               { "mac-mini": 1.614, "nuc11": 5.527, "aplos": 1.158, "pi0": 22.199, "milkv-duo": 61.937 },
+        "socat+wizeng":          { "mac-mini": 1.671, "nuc11": 10.451, "aplos": 1.240, "pi0": 25.581, "milkv-duo": 129.970 },
+        "socat+replay":          { "mac-mini": 1.590, "nuc11": 10.380, "aplos": 1.152, "pi0": 25.489, "milkv-duo": 131.322 },
+        "socat+decomposed-wt":   { "mac-mini": 1.587, "nuc11": 10.398, "aplos": 1.160, "pi0": 25.593, "milkv-duo": 133.093 }
+      },
+      "trace_size_mb":           { "mac-mini": 10.6, "nuc11": 10.6, "aplos": 10.6, "pi0": 10.6, "milkv-duo": 10.3 },
+      "trace_peak_mb_s":         { "mac-mini": 138.0, "nuc11": 58.9, "aplos": 111.2, "pi0": 7.9, "milkv-duo": 2.5 },
+      "trace_avg_mb_s":          { "mac-mini": 6.5, "nuc11": 1.9, "aplos": 9.2, "pi0": 0.5, "milkv-duo": 0.2 }
+    },
+    "blake3": {
+      "time_s": {
+        "native":                { "mac-mini": 0.078, "nuc11": 0.032, "aplos": 0.052, "pi0": 4.716, "milkv-duo": 4.889 },
+        "no-rec":                { "mac-mini": 0.267, "nuc11": 0.436, "aplos": 0.444, "pi0": 5.248, "milkv-duo": 14.116 },
+        "devnull":               { "mac-mini": 0.587, "nuc11": 0.828, "aplos": 0.962, "pi0": 11.499, "milkv-duo": 29.163 },
+        "socat+wizeng":          { "mac-mini": 3.107, "nuc11": 3.158, "aplos": 3.129, "pi0": 24.395, "milkv-duo": 40.387 },
+        "socat+replay":          { "mac-mini": 0.693, "nuc11": 1.066, "aplos": 1.010, "pi0": 24.473, "milkv-duo": 40.447 },
+        "socat+decomposed-wt":   { "mac-mini": 1.466, "nuc11": 1.540, "aplos": 1.476, "pi0": 24.069, "milkv-duo": 40.375 }
+      },
+      "trace_size_mb":           { "mac-mini": 100.1, "nuc11": 100.1, "aplos": 100.1, "pi0": 100.1, "milkv-duo": 100.1 },
+      "trace_peak_mb_s":         { "mac-mini": 175.6, "nuc11": 124.5, "aplos": 105.0, "pi0": 8.8, "milkv-duo": 3.6 },
+      "trace_avg_mb_s":          { "mac-mini": 168.6, "nuc11": 120.6, "aplos": 103.9, "pi0": 8.7, "milkv-duo": 3.4 }
+    },
+    "cpu_utilization": {
+      "compress-l3": {
+        "wizeng":          { "mac-mini": 83.6, "nuc11": 42.2, "aplos": 85.4, "pi0": 11.9, "milkv-duo": 5.9 },
+        "wt-replay":       { "mac-mini": 25.2, "nuc11": 7.7, "aplos": 25.6, "pi0": 1.9, "milkv-duo": 1.5 },
+        "decomposed-wt":   { "mac-mini": 62.1, "nuc11": 19.9, "aplos": 69.7, "pi0": 4.5, "milkv-duo": 3.0 }
+      },
+      "sort-10k": {
+        "wizeng":          { "mac-mini": 93.2, "nuc11": 29.7, "aplos": 93.5, "pi0": 11.5, "milkv-duo": 3.8 },
+        "wt-replay":       { "mac-mini": 43.9, "nuc11": 7.7, "aplos": 34.6, "pi0": 2.4, "milkv-duo": 1.3 },
+        "decomposed-wt":   { "mac-mini": 84.9, "nuc11": 15.0, "aplos": 72.2, "pi0": 5.0, "milkv-duo": 2.1 }
+      },
+      "regex-redux": {
+        "wizeng":          { "mac-mini": 63.0, "nuc11": 24.3, "aplos": 65.0, "pi0": 9.4, "milkv-duo": 8.9 },
+        "wt-replay":       { "mac-mini": 29.1, "nuc11": 9.4, "aplos": 28.9, "pi0": 2.9, "milkv-duo": 2.5 },
+        "decomposed-wt":   { "mac-mini": 37.7, "nuc11": 12.4, "aplos": 40.7, "pi0": 3.9, "milkv-duo": 3.4 }
+      },
+      "json-process": {
+        "wizeng":          { "mac-mini": 79.3, "nuc11": 68.6, "aplos": 91.2, "pi0": 10.9, "milkv-duo": 3.2 },
+        "wt-replay":       { "mac-mini": 38.0, "nuc11": 32.2, "aplos": 47.2, "pi0": 3.7, "milkv-duo": 1.2 },
+        "decomposed-wt":   { "mac-mini": 42.2, "nuc11": 36.7, "aplos": 54.2, "pi0": 4.4, "milkv-duo": 1.4 }
+      },
+      "speedtest1": {
+        "wizeng":          { "mac-mini": 45.1, "nuc11": 11.9, "aplos": 54.5, "pi0": 5.7, "milkv-duo": 1.7 },
+        "wt-replay":       { "mac-mini": 14.4, "nuc11": 5.4, "aplos": 19.9, "pi0": 1.9, "milkv-duo": 0.9 },
+        "decomposed-wt":   { "mac-mini": 19.9, "nuc11": 6.8, "aplos": 27.1, "pi0": 2.6, "milkv-duo": 1.2 }
+      },
+      "blake3": {
+        "wizeng":          { "mac-mini": 85.0, "nuc11": 53.5, "aplos": 85.8, "pi0": 13.7, "milkv-duo": 9.7 },
+        "wt-replay":       { "mac-mini": 46.6, "nuc11": 16.3, "aplos": 37.5, "pi0": 2.4, "milkv-duo": 2.3 },
+        "decomposed-wt":   { "mac-mini": 72.6, "nuc11": 35.4, "aplos": 74.6, "pi0": 6.8, "milkv-duo": 5.1 }
+      }
+    }
+  },
+  "threaded": {
+    "compress-l3": {
+      "time_s": {
+        "native":                { "mac-mini": 0.154, "nuc11": 0.521, "aplos": 0.135, "pi0": 13.040, "milkv-duo": 12.498 },
+        "no-rec":                { "mac-mini": 0.667, "nuc11": 2.094, "aplos": 0.324, "pi0": 19.183, "milkv-duo": 14.347 },
+        "devnull":               { "mac-mini": 1.518, "nuc11": 3.008, "aplos": 1.468, "pi0": 22.071, "milkv-duo": 79.588 },
+        "socat+wizeng":          { "mac-mini": 3.145, "nuc11": 3.846, "aplos": 3.104, "pi0": 30.307, "milkv-duo": 148.342 },
+        "socat+replay":          { "mac-mini": 1.529, "nuc11": 3.184, "aplos": 1.398, "pi0": 29.763, "milkv-duo": 147.210 },
+        "socat+decomposed-wt":   { "mac-mini": 1.647, "nuc11": 3.301, "aplos": 1.434, "pi0": 30.182, "milkv-duo": 148.906 }
+      },
+      "trace_size_mb":           { "mac-mini": 96.9, "nuc11": 96.9, "aplos": 96.9, "pi0": 96.9, "milkv-duo": 96.9 },
+      "trace_peak_mb_s":         { "mac-mini": 111.4, "nuc11": 53.6, "aplos": 79.2, "pi0": 6.1, "milkv-duo": 1.6 },
+      "trace_avg_mb_s":          { "mac-mini": 62.9, "nuc11": 32.1, "aplos": 62.3, "pi0": 4.1, "milkv-duo": 1.2 }
+    },
+    "sort-10k": {
+      "time_s": {
+        "native":                { "mac-mini": 0.427, "nuc11": 0.616, "aplos": 0.560, "pi0": 20.102, "milkv-duo": 27.133 },
+        "no-rec":                { "mac-mini": 0.947, "nuc11": 3.785, "aplos": 1.548, "pi0": 29.452, "milkv-duo": 60.118 },
+        "devnull":               { "mac-mini": 3.022, "nuc11": 6.682, "aplos": 4.506, "pi0": 58.877, "milkv-duo": 488.739 },
+        "socat+wizeng":          { "mac-mini": 8.064, "nuc11": 24.565, "aplos": 7.971, "pi0": 73.028, "milkv-duo": 1108.791 },
+        "socat+replay":          { "mac-mini": 3.022, "nuc11": 23.614, "aplos": 4.511, "pi0": 72.452, "milkv-duo": 1211.648 },
+        "socat+decomposed-wt":   { "mac-mini": 3.375, "nuc11": 23.602, "aplos": 4.683, "pi0": 72.407, "milkv-duo": 1155.712 }
+      },
+      "trace_size_mb":           { "mac-mini": 218.2, "nuc11": 218.2, "aplos": 218.2, "pi0": 218.2, "milkv-duo": 218.2 },
+      "trace_peak_mb_s":         { "mac-mini": 90.5, "nuc11": 35.8, "aplos": 64.5, "pi0": 4.8, "milkv-duo": 1.4 },
+      "trace_avg_mb_s":          { "mac-mini": 71.8, "nuc11": 32.6, "aplos": 47.5, "pi0": 3.7, "milkv-duo": 0.5 }
+    },
+    "regex-redux": {
+      "time_s": {
+        "native":                { "mac-mini": 0.091, "nuc11": 0.102, "aplos": 0.125, "pi0": 1.893, "milkv-duo": 5.709 },
+        "no-rec":                { "mac-mini": 0.367, "nuc11": 0.303, "aplos": 0.365, "pi0": 5.526, "milkv-duo": 10.620 },
+        "devnull":               { "mac-mini": 0.430, "nuc11": 0.380, "aplos": 0.467, "pi0": 6.796, "milkv-duo": 13.853 },
+        "socat+wizeng":          { "mac-mini": 0.648, "nuc11": 0.567, "aplos": 0.482, "pi0": 7.627, "milkv-duo": 14.665 },
+        "socat+replay":          { "mac-mini": 0.442, "nuc11": 0.398, "aplos": 0.491, "pi0": 7.736, "milkv-duo": 14.650 },
+        "socat+decomposed-wt":   { "mac-mini": 0.449, "nuc11": 0.431, "aplos": 0.485, "pi0": 7.575, "milkv-duo": 14.457 }
+      },
+      "trace_size_mb":           { "mac-mini": 9.7, "nuc11": 9.7, "aplos": 9.7, "pi0": 9.7, "milkv-duo": 9.7 },
+      "trace_peak_mb_s":         { "mac-mini": 148.3, "nuc11": 130.4, "aplos": 102.8, "pi0": 8.6, "milkv-duo": 3.3 },
+      "trace_avg_mb_s":          { "mac-mini": 21.1, "nuc11": 25.4, "aplos": 20.7, "pi0": 1.4, "milkv-duo": 0.7 }
+    },
+    "json-process": {
+      "time_s": {
+        "native":                { "mac-mini": 1.331, "nuc11": 2.484, "aplos": 2.046, "pi0": 27.022, "milkv-duo": 116.749 },
+        "no-rec":                { "mac-mini": 5.534, "nuc11": 3.340, "aplos": 3.764, "pi0": 49.897, "milkv-duo": 232.823 },
+        "devnull":               { "mac-mini": 5.889, "nuc11": 3.833, "aplos": 4.156, "pi0": 55.935, "milkv-duo": 239.371 },
+        "socat+wizeng":          { "mac-mini": 6.980, "nuc11": 4.824, "aplos": 4.986, "pi0": 61.761, "milkv-duo": 249.919 },
+        "socat+replay":          { "mac-mini": 5.918, "nuc11": 3.882, "aplos": 4.151, "pi0": 61.923, "milkv-duo": 250.843 },
+        "socat+decomposed-wt":   { "mac-mini": 6.219, "nuc11": 4.117, "aplos": 4.313, "pi0": 61.726, "milkv-duo": 249.393 }
+      },
+      "trace_size_mb":           { "mac-mini": 45.0, "nuc11": 45.0, "aplos": 45.0, "pi0": 45.0, "milkv-duo": 45.0 },
+      "trace_peak_mb_s":         { "mac-mini": 147.3, "nuc11": 130.5, "aplos": 116.8, "pi0": 8.6, "milkv-duo": 3.3 },
+      "trace_avg_mb_s":          { "mac-mini": 7.2, "nuc11": 11.2, "aplos": 10.4, "pi0": 0.8, "milkv-duo": 0.2 }
+    },
+    "speedtest1": {
+      "time_s": {
+        "native":                { "mac-mini": 0.180, "nuc11": 0.301, "aplos": 0.216, "pi0": 3.185, "milkv-duo": 6.864 },
+        "no-rec":                { "mac-mini": 1.107, "nuc11": 4.704, "aplos": 0.796, "pi0": 13.422, "milkv-duo": 36.513 },
+        "devnull":               { "mac-mini": 1.490, "nuc11": 4.955, "aplos": 1.160, "pi0": 18.179, "milkv-duo": 110.760 },
+        "socat+wizeng":          { "mac-mini": 1.563, "nuc11": 6.330, "aplos": 1.220, "pi0": 20.870, "milkv-duo": 225.571 },
+        "socat+replay":          { "mac-mini": 1.497, "nuc11": 6.232, "aplos": 1.125, "pi0": 20.768, "milkv-duo": 223.393 },
+        "socat+decomposed-wt":   { "mac-mini": 1.502, "nuc11": 6.223, "aplos": 1.135, "pi0": 20.822, "milkv-duo": 225.959 }
+      },
+      "trace_size_mb":           { "mac-mini": 10.6, "nuc11": 10.6, "aplos": 10.6, "pi0": 10.6, "milkv-duo": 10.3 },
+      "trace_peak_mb_s":         { "mac-mini": 94.2, "nuc11": 49.3, "aplos": 70.4, "pi0": 6.4, "milkv-duo": 1.3 },
+      "trace_avg_mb_s":          { "mac-mini": 7.0, "nuc11": 2.1, "aplos": 9.2, "pi0": 0.6, "milkv-duo": 0.1 }
+    },
+    "blake3": {
+      "time_s": {
+        "native":                { "mac-mini": 0.078, "nuc11": 0.033, "aplos": 0.053, "pi0": 4.664, "milkv-duo": 4.892 },
+        "no-rec":                { "mac-mini": 0.267, "nuc11": 0.436, "aplos": 0.450, "pi0": 5.336, "milkv-duo": 14.110 },
+        "devnull":               { "mac-mini": 0.957, "nuc11": 1.331, "aplos": 1.571, "pi0": 17.302, "milkv-duo": 47.687 },
+        "socat+wizeng":          { "mac-mini": 3.213, "nuc11": 3.158, "aplos": 3.087, "pi0": 24.644, "milkv-duo": 59.942 },
+        "socat+replay":          { "mac-mini": 0.959, "nuc11": 1.255, "aplos": 1.448, "pi0": 25.107, "milkv-duo": 59.810 },
+        "socat+decomposed-wt":   { "mac-mini": 1.487, "nuc11": 1.545, "aplos": 1.492, "pi0": 25.059, "milkv-duo": 59.918 }
+      },
+      "trace_size_mb":           { "mac-mini": 100.1, "nuc11": 100.1, "aplos": 100.1, "pi0": 100.1, "milkv-duo": 100.1 },
+      "trace_peak_mb_s":         { "mac-mini": 106.2, "nuc11": 76.6, "aplos": 68.7, "pi0": 5.8, "milkv-duo": 2.2 },
+      "trace_avg_mb_s":          { "mac-mini": 103.4, "nuc11": 75.1, "aplos": 63.7, "pi0": 5.8, "milkv-duo": 2.1 }
+    },
+    "cpu_utilization": {
+      "compress-l3": {
+        "wizeng":          { "mac-mini": 83.7, "nuc11": 49.2, "aplos": 85.6, "pi0": 11.7, "milkv-duo": 3.7 },
+        "wt-replay":       { "mac-mini": 22.5, "nuc11": 8.8, "aplos": 23.3, "pi0": 1.9, "milkv-duo": 1.1 },
+        "decomposed-wt":   { "mac-mini": 59.5, "nuc11": 23.9, "aplos": 66.9, "pi0": 4.6, "milkv-duo": 2.0 }
+      },
+      "sort-10k": {
+        "wizeng":          { "mac-mini": 93.2, "nuc11": 33.3, "aplos": 93.7, "pi0": 13.1, "milkv-duo": 1.7 },
+        "wt-replay":       { "mac-mini": 40.9, "nuc11": 8.3, "aplos": 32.6, "pi0": 2.6, "milkv-duo": 0.8 },
+        "decomposed-wt":   { "mac-mini": 84.9, "nuc11": 16.4, "aplos": 66.1, "pi0": 5.6, "milkv-duo": 1.2 }
+      },
+      "regex-redux": {
+        "wizeng":          { "mac-mini": 62.9, "nuc11": 24.3, "aplos": 64.6, "pi0": 9.5, "milkv-duo": 8.4 },
+        "wt-replay":       { "mac-mini": 29.8, "nuc11": 9.7, "aplos": 29.3, "pi0": 2.9, "milkv-duo": 2.3 },
+        "decomposed-wt":   { "mac-mini": 39.0, "nuc11": 12.5, "aplos": 39.1, "pi0": 3.9, "milkv-duo": 3.3 }
+      },
+      "json-process": {
+        "wizeng":          { "mac-mini": 80.0, "nuc11": 69.1, "aplos": 91.1, "pi0": 11.1, "milkv-duo": 3.2 },
+        "wt-replay":       { "mac-mini": 38.0, "nuc11": 33.1, "aplos": 48.2, "pi0": 3.8, "milkv-duo": 1.1 },
+        "decomposed-wt":   { "mac-mini": 42.5, "nuc11": 37.9, "aplos": 55.1, "pi0": 4.5, "milkv-duo": 1.4 }
+      },
+      "speedtest1": {
+        "wizeng":          { "mac-mini": 47.8, "nuc11": 14.4, "aplos": 55.6, "pi0": 6.5, "milkv-duo": 1.2 },
+        "wt-replay":       { "mac-mini": 15.0, "nuc11": 5.1, "aplos": 20.5, "pi0": 2.1, "milkv-duo": 0.7 },
+        "decomposed-wt":   { "mac-mini": 20.8, "nuc11": 6.6, "aplos": 27.4, "pi0": 2.9, "milkv-duo": 0.9 }
+      },
+      "blake3": {
+        "wizeng":          { "mac-mini": 85.1, "nuc11": 53.4, "aplos": 85.9, "pi0": 13.5, "milkv-duo": 7.8 },
+        "wt-replay":       { "mac-mini": 38.2, "nuc11": 15.8, "aplos": 29.5, "pi0": 2.4, "milkv-duo": 1.8 },
+        "decomposed-wt":   { "mac-mini": 73.1, "nuc11": 35.5, "aplos": 74.3, "pi0": 6.6, "milkv-duo": 4.1 }
+      }
+    }
+  },
+  "derived": {
+    "recording_overhead_non_threaded": {
+      "description": "Median no-rec to devnull ratio",
+      "compress-l3":   { "mac-mini": 1.77, "nuc11": 1.32, "aplos": 3.06, "pi0": 1.20, "milkv-duo": 2.71 },
+      "sort-10k":      { "mac-mini": 3.21, "nuc11": 2.21, "aplos": 2.62, "pi0": 2.39, "milkv-duo": 3.94 },
+      "regex-redux":   { "mac-mini": 1.07, "nuc11": 1.11, "aplos": 1.15, "pi0": 1.13, "milkv-duo": 1.15 },
+      "json-process":  { "mac-mini": 1.04, "nuc11": 1.08, "aplos": 1.05, "pi0": 1.08, "milkv-duo": 0.98 },
+      "speedtest1":    { "mac-mini": 1.46, "nuc11": 1.18, "aplos": 1.45, "pi0": 1.66, "milkv-duo": 1.69 },
+      "blake3":        { "mac-mini": 2.20, "nuc11": 1.90, "aplos": 2.17, "pi0": 2.19, "milkv-duo": 2.07 }
+    },
+    "threaded_vs_non_threaded_ratio": {
+      "description": "Median time ratio (< 1.0 = threaded faster, > 1.0 = threaded slower)",
+      "compress-l3": {
+        "devnull":               { "mac-mini": 1.28, "nuc11": 1.09, "aplos": 1.50, "pi0": 1.01, "milkv-duo": 1.96 },
+        "socat+wizeng":          { "mac-mini": 1.00, "nuc11": 0.72, "aplos": 0.98, "pi0": 1.05, "milkv-duo": 1.74 },
+        "socat+replay":          { "mac-mini": 1.24, "nuc11": 0.60, "aplos": 1.25, "pi0": 1.02, "milkv-duo": 1.73 },
+        "socat+decomposed-wt":   { "mac-mini": 1.07, "nuc11": 0.63, "aplos": 1.10, "pi0": 1.04, "milkv-duo": 1.75 }
+      },
+      "sort-10k": {
+        "devnull":               { "mac-mini": 0.99, "nuc11": 0.81, "aplos": 1.09, "pi0": 0.84, "milkv-duo": 2.17 },
+        "socat+wizeng":          { "mac-mini": 1.01, "nuc11": 0.86, "aplos": 1.00, "pi0": 0.88, "milkv-duo": 3.13 },
+        "socat+replay":          { "mac-mini": 1.10, "nuc11": 0.86, "aplos": 1.13, "pi0": 0.88, "milkv-duo": 3.46 },
+        "socat+decomposed-wt":   { "mac-mini": 0.98, "nuc11": 0.85, "aplos": 1.12, "pi0": 0.87, "milkv-duo": 3.27 }
+      },
+      "regex-redux": {
+        "devnull":               { "mac-mini": 1.10, "nuc11": 1.13, "aplos": 1.12, "pi0": 1.08, "milkv-duo": 1.15 },
+        "socat+wizeng":          { "mac-mini": 0.93, "nuc11": 0.94, "aplos": 0.95, "pi0": 0.98, "milkv-duo": 1.14 },
+        "socat+replay":          { "mac-mini": 0.99, "nuc11": 1.05, "aplos": 1.11, "pi0": 0.99, "milkv-duo": 1.13 },
+        "socat+decomposed-wt":   { "mac-mini": 0.91, "nuc11": 1.00, "aplos": 1.10, "pi0": 0.97, "milkv-duo": 1.12 }
+      },
+      "json-process": {
+        "devnull":               { "mac-mini": 1.03, "nuc11": 1.06, "aplos": 1.06, "pi0": 1.04, "milkv-duo": 1.05 },
+        "socat+wizeng":          { "mac-mini": 1.00, "nuc11": 0.95, "aplos": 0.99, "pi0": 1.00, "milkv-duo": 1.04 },
+        "socat+replay":          { "mac-mini": 1.00, "nuc11": 0.94, "aplos": 1.00, "pi0": 1.00, "milkv-duo": 1.04 },
+        "socat+decomposed-wt":   { "mac-mini": 1.00, "nuc11": 0.93, "aplos": 1.00, "pi0": 1.00, "milkv-duo": 1.04 }
+      },
+      "speedtest1": {
+        "devnull":               { "mac-mini": 0.92, "nuc11": 0.90, "aplos": 1.00, "pi0": 0.82, "milkv-duo": 1.79 },
+        "socat+wizeng":          { "mac-mini": 0.94, "nuc11": 0.61, "aplos": 0.98, "pi0": 0.82, "milkv-duo": 1.74 },
+        "socat+replay":          { "mac-mini": 0.94, "nuc11": 0.60, "aplos": 0.98, "pi0": 0.81, "milkv-duo": 1.70 },
+        "socat+decomposed-wt":   { "mac-mini": 0.95, "nuc11": 0.60, "aplos": 0.98, "pi0": 0.81, "milkv-duo": 1.70 }
+      },
+      "blake3": {
+        "devnull":               { "mac-mini": 1.63, "nuc11": 1.61, "aplos": 1.63, "pi0": 1.50, "milkv-duo": 1.64 },
+        "socat+wizeng":          { "mac-mini": 1.03, "nuc11": 1.00, "aplos": 0.99, "pi0": 1.01, "milkv-duo": 1.48 },
+        "socat+replay":          { "mac-mini": 1.38, "nuc11": 1.18, "aplos": 1.43, "pi0": 1.03, "milkv-duo": 1.48 },
+        "socat+decomposed-wt":   { "mac-mini": 1.01, "nuc11": 1.00, "aplos": 1.01, "pi0": 1.04, "milkv-duo": 1.48 }
+      }
+    }
+  }
+}
