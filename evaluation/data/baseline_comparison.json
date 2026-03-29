@@ -1,0 +1,346 @@
+{
+  "metadata": {
+    "benchmarks": {
+      "compress-l3": "zstd-l3",
+      "compress-l9": "zstd-l9",
+      "compress-l19": "zstd-l19",
+      "sort": "ext-sort",
+      "regex-redux": "regex-redux",
+      "json-process": "py-json",
+      "speedtest1": "sqlite-st1",
+      "blake3": "blake3"
+    },
+    "tools": [
+      "native",
+      "wasmtime",
+      "wasmtime-rr",
+      "wtrr-threaded",
+      "rr",
+      "r3",
+      "pinplay",
+      "qemu-rr",
+      "qemu-norr-wall",
+      "qemu-norr-internal"
+    ],
+    "tool_labels": {
+      "native": "Native",
+      "wasmtime": "Wasmtime",
+      "wasmtime-rr": "wasmtime-rr",
+      "wtrr-threaded": "wtrr-threaded",
+      "rr": "rr",
+      "r3": "r3",
+      "pinplay": "PinPlay",
+      "qemu-rr": "QEMU-rr",
+      "qemu-norr-wall": "QEMU (no RR, wall)",
+      "qemu-norr-internal": "QEMU (no RR, internal)"
+    },
+    "platform": "x86-64 (AMD Ryzen 9 7950X, Zen 4)",
+    "trace_storage": "50 GB tmpfs at /tmp/traces/"
+  },
+  "results": {
+    "compress-l3": {
+      "time_s": {
+        "native": 4.0,
+        "wasmtime": 18.1,
+        "wasmtime-rr": 70.1,
+        "wtrr-threaded": 97.2,
+        "rr": 93.6,
+        "r3": 345.8,
+        "pinplay": 2095.9,
+        "qemu-norr-wall": 32.0,
+        "qemu-norr-internal": 26.9,
+        "qemu-rr": 46.1
+      },
+      "trace_size_mb": {
+        "wasmtime-rr": 12288.0,
+        "wtrr-threaded": 12288.0,
+        "rr": 12288.0,
+        "r3": 4812.8,
+        "pinplay": 27648.0,
+        "qemu": 15.0
+      },
+      "trace_peak_mb_s": {
+        "wasmtime-rr": 203.1,
+        "wtrr-threaded": 146.0,
+        "rr": 459.0,
+        "r3": 19.1,
+        "pinplay": 28.3,
+        "qemu": 5.5
+      },
+      "trace_avg_mb_s": {
+        "wasmtime-rr": 164.3,
+        "wtrr-threaded": 118.6,
+        "rr": 122.7,
+        "r3": 13.8,
+        "pinplay": 13.1,
+        "qemu": 0.3
+      }
+    },
+    "compress-l9": {
+      "time_s": {
+        "native": 3.7,
+        "wasmtime": 16.6,
+        "wasmtime-rr": 56.8,
+        "wtrr-threaded": 75.9,
+        "rr": 76.1,
+        "r3": 401.7,
+        "pinplay": 1729.1,
+        "qemu-norr-wall": 34.3,
+        "qemu-norr-internal": 29.1,
+        "qemu-rr": 50.1
+      },
+      "trace_size_mb": {
+        "wasmtime-rr": 8704.0,
+        "wtrr-threaded": 8704.0,
+        "rr": 8704.0,
+        "r3": 4915.2,
+        "pinplay": 21504.0,
+        "qemu": 11.0
+      },
+      "trace_peak_mb_s": {
+        "wasmtime-rr": 185.8,
+        "wtrr-threaded": 135.9,
+        "rr": 425.3,
+        "r3": 18.7,
+        "pinplay": 29.7,
+        "qemu": 5.2
+      },
+      "trace_avg_mb_s": {
+        "wasmtime-rr": 152.0,
+        "wtrr-threaded": 113.8,
+        "rr": 113.1,
+        "r3": 12.1,
+        "pinplay": 11.9,
+        "qemu": 0.2
+      }
+    },
+    "compress-l19": {
+      "time_s": {
+        "native": 8.7,
+        "wasmtime": 10.7,
+        "wasmtime-rr": 11.5,
+        "wtrr-threaded": 11.7,
+        "rr": 9.9,
+        "r3": 54.7,
+        "pinplay": 186.7,
+        "qemu-norr-wall": 30.1,
+        "qemu-norr-internal": 28.3,
+        "qemu-rr": 37.3
+      },
+      "trace_size_mb": {
+        "wasmtime-rr": 60.0,
+        "wtrr-threaded": 60.0,
+        "rr": 60.0,
+        "r3": 409.0,
+        "pinplay": 149.0,
+        "qemu": 1.1
+      },
+      "trace_peak_mb_s": {
+        "wasmtime-rr": 31.0,
+        "wtrr-threaded": 21.0,
+        "rr": 416.7,
+        "r3": 13.1,
+        "pinplay": 27.3,
+        "qemu": 5.5
+      },
+      "trace_avg_mb_s": {
+        "wasmtime-rr": 5.2,
+        "wtrr-threaded": 5.1,
+        "rr": 6.0,
+        "r3": 7.5,
+        "pinplay": 0.8,
+        "qemu": 0.03
+      }
+    },
+    "sort": {
+      "time_s": {
+        "native": 9.1,
+        "wasmtime": 20.3,
+        "wasmtime-rr": 60.5,
+        "wtrr-threaded": 52.1,
+        "rr": 1404.5,
+        "r3": 362.3,
+        "pinplay": 749.7,
+        "qemu-norr-wall": 157.7,
+        "qemu-norr-internal": 138.3,
+        "qemu-rr": 221.5
+      },
+      "trace_size_mb": {
+        "wasmtime-rr": 3993.6,
+        "wtrr-threaded": 3993.6,
+        "rr": 3584.0,
+        "r3": 4915.2,
+        "pinplay": 12288.0,
+        "qemu": 225.0
+      },
+      "trace_peak_mb_s": {
+        "wasmtime-rr": 197.9,
+        "wtrr-threaded": 123.9,
+        "rr": 286.5,
+        "r3": 17.7,
+        "pinplay": 117.0,
+        "qemu": 5.2
+      },
+      "trace_avg_mb_s": {
+        "wasmtime-rr": 65.5,
+        "wtrr-threaded": 76.0,
+        "rr": 2.5,
+        "r3": 13.4,
+        "pinplay": 16.3,
+        "qemu": 1.0
+      }
+    },
+    "regex-redux": {
+      "time_s": {
+        "native": 10.7,
+        "wasmtime": 24.2,
+        "wasmtime-rr": 28.6,
+        "wtrr-threaded": 30.6,
+        "rr": 16.1,
+        "r3": 194.1,
+        "pinplay": 423.2,
+        "qemu-norr-wall": 136.1,
+        "qemu-norr-internal": 125.1,
+        "qemu-rr": 162.1
+      },
+      "trace_size_mb": {
+        "wasmtime-rr": 1019.0,
+        "wtrr-threaded": 1019.0,
+        "rr": 444.0,
+        "r3": 2764.8,
+        "pinplay": 2560.0,
+        "qemu": 2.3
+      },
+      "trace_peak_mb_s": {
+        "wasmtime-rr": 309.2,
+        "wtrr-threaded": 192.7,
+        "rr": 290.7,
+        "r3": 22.3,
+        "pinplay": 175.6,
+        "qemu": 5.5
+      },
+      "trace_avg_mb_s": {
+        "wasmtime-rr": 35.3,
+        "wtrr-threaded": 33.1,
+        "rr": 27.3,
+        "r3": 14.1,
+        "pinplay": 5.0,
+        "qemu": 0.01
+      }
+    },
+    "json-process": {
+      "time_s": {
+        "native": 12.3,
+        "wasmtime": 20.3,
+        "wasmtime-rr": 21.8,
+        "wtrr-threaded": 22.3,
+        "rr": 16.3,
+        "r3": 80.8,
+        "pinplay": 1242.5,
+        "qemu-norr-wall": 174.8,
+        "qemu-norr-internal": 166.0,
+        "qemu-rr": 225.6
+      },
+      "trace_size_mb": {
+        "wasmtime-rr": 286.0,
+        "wtrr-threaded": 286.0,
+        "rr": 38.0,
+        "r3": 731.0,
+        "pinplay": 732.0,
+        "qemu": 9.7
+      },
+      "trace_peak_mb_s": {
+        "wasmtime-rr": 322.3,
+        "wtrr-threaded": 179.0,
+        "rr": 155.9,
+        "r3": 21.5,
+        "pinplay": 180.5,
+        "qemu": 6.3
+      },
+      "trace_avg_mb_s": {
+        "wasmtime-rr": 12.6,
+        "wtrr-threaded": 12.3,
+        "rr": 2.2,
+        "r3": 8.7,
+        "pinplay": 0.6,
+        "qemu": 0.04
+      }
+    },
+    "speedtest1": {
+      "time_s": {
+        "native": 9.1,
+        "wasmtime": 32.7,
+        "wasmtime-rr": 141.0,
+        "wtrr-threaded": 160.5,
+        "rr": 395.0,
+        "r3": 742.0,
+        "pinplay": 962.4,
+        "qemu-norr-wall": 98.3,
+        "qemu-norr-internal": 96.9,
+        "qemu-rr": 119.4
+      },
+      "trace_size_mb": {
+        "wasmtime-rr": 19456.0,
+        "wtrr-threaded": 19456.0,
+        "rr": 4403.2,
+        "r3": 7782.4,
+        "pinplay": 24576.0,
+        "qemu": 60.0
+      },
+      "trace_peak_mb_s": {
+        "wasmtime-rr": 199.2,
+        "wtrr-threaded": 169.8,
+        "rr": 153.6,
+        "r3": 20.1,
+        "pinplay": 113.1,
+        "qemu": 5.2
+      },
+      "trace_avg_mb_s": {
+        "wasmtime-rr": 133.3,
+        "wtrr-threaded": 117.0,
+        "rr": 10.9,
+        "r3": 10.4,
+        "pinplay": 25.3,
+        "qemu": 0.5
+      }
+    },
+    "blake3": {
+      "time_s": {
+        "native": 3.2,
+        "wasmtime": 34.9,
+        "wasmtime-rr": 91.1,
+        "wtrr-threaded": 132.5,
+        "rr": 19.9,
+        "r3": 236.3,
+        "pinplay": 187.9,
+        "qemu-norr-wall": 72.4,
+        "qemu-norr-internal": 70.7,
+        "qemu-rr": 80.4
+      },
+      "trace_size_mb": {
+        "wasmtime-rr": 15360.0,
+        "wtrr-threaded": 15360.0,
+        "rr": 15360.0,
+        "r3": 2150.4,
+        "pinplay": 35840.0,
+        "qemu": 2.8
+      },
+      "trace_peak_mb_s": {
+        "wasmtime-rr": 192.2,
+        "wtrr-threaded": 131.6,
+        "rr": 1076.8,
+        "r3": 10.3,
+        "pinplay": 214.3,
+        "qemu": 5.5
+      },
+      "trace_avg_mb_s": {
+        "wasmtime-rr": 164.7,
+        "wtrr-threaded": 113.3,
+        "rr": 753.4,
+        "r3": 8.9,
+        "pinplay": 188.7,
+        "qemu": 0.03
+      }
+    }
+  }
+}
