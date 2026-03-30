@@ -13,7 +13,7 @@ DATA_FILE = Path(__file__).parent / "data" / "baseline_comparison.json"
 PLOTS_DIR = Path(__file__).parent / "plots"
 
 TOOLS   = ["wasmtime-rr", "qemu-rr", "r3", "rr", "pinplay"]
-LABELS  = ["CRIMP", "QEMU", "r3", "rr", "PinPlay"]
+LABELS  = ["CRIMP", "QEMU", "Wasm-R3", "rr", "PinPlay"]
 COLORS  = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B2"]
 MARKERS = ["o", "D", "p", "s", "v"]
 
@@ -126,7 +126,7 @@ def main():
     for xm in mids:
         ax.axvline(xm, color="#cccccc", linewidth=0.8, linestyle="-", zorder=0)
 
-    ax.legend(fontsize=12, framealpha=0.9, loc="upper left",
+    ax.legend(fontsize=11, framealpha=0.9, loc="upper left",
               ncol=5, handletextpad=0.4, columnspacing=0.8,
               bbox_to_anchor=(0.0, 1.01))
 
