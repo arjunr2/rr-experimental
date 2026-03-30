@@ -1,0 +1,58 @@
+{
+  "metadata": {
+    "benchmark": "speedtest1",
+    "benchmark_label": "sqlite-st1",
+    "description": "Monitor overhead during deterministic replay of speedtest1, streamed from 5 remote devices. Monitors skip functions starting with crimp_driver_mono::.",
+    "devices": ["milkv-duo", "pi0", "nuc11", "aplos", "mac-mini"],
+    "device_labels": {
+      "milkv-duo": "milkv",
+      "pi0":       "rpi0",
+      "nuc11":     "nuc",
+      "aplos":     "aplos",
+      "mac-mini":  "mac"
+    },
+    "monitors": ["no-monitors", "icount", "loops", "hotness", "profile"],
+    "monitor_labels": {
+      "no-monitors": "none",
+      "icount":      "icount",
+      "loops":       "loops",
+      "hotness":     "hotness",
+      "profile":     "profile"
+    },
+    "cumulative_monitors": ["none", "+icount", "+loops", "+hotness", "+profile"],
+    "runs": 5,
+    "values": "median"
+  },
+  "individual": {
+    "cpu_pct": {
+      "no-monitors": { "milkv-duo":  1.9, "pi0":  6.9, "nuc11": 18.5, "aplos":  75.9, "mac-mini":  59.0 },
+      "icount":      { "milkv-duo":  3.0, "pi0": 13.6, "nuc11": 37.9, "aplos":  99.6, "mac-mini":  99.0 },
+      "loops":       { "milkv-duo":  1.9, "pi0":  7.0, "nuc11": 19.0, "aplos":  77.7, "mac-mini":  61.5 },
+      "hotness":     { "milkv-duo":  2.9, "pi0": 12.9, "nuc11": 33.8, "aplos": 100.0, "mac-mini": 100.0 },
+      "profile":     { "milkv-duo":  7.3, "pi0": 37.7, "nuc11": 91.1, "aplos":  99.6, "mac-mini":  99.4 }
+    },
+    "wall_time_s": {
+      "no-monitors": { "milkv-duo": 131.9, "pi0": 22.9, "nuc11": 7.5, "aplos": 1.5, "mac-mini": 1.9 },
+      "icount":      { "milkv-duo": 131.9, "pi0": 23.0, "nuc11": 7.7, "aplos": 2.7, "mac-mini": 2.7 },
+      "loops":       { "milkv-duo": 131.9, "pi0": 22.9, "nuc11": 7.5, "aplos": 1.5, "mac-mini": 1.9 },
+      "hotness":     { "milkv-duo": 132.2, "pi0": 23.2, "nuc11": 7.8, "aplos": 2.4, "mac-mini": 2.4 },
+      "profile":     { "milkv-duo": 131.9, "pi0": 23.0, "nuc11": 8.8, "aplos": 7.8, "mac-mini": 7.9 }
+    }
+  },
+  "cumulative": {
+    "cpu_pct": {
+      "none":     { "milkv-duo":  1.9, "pi0":  6.5, "nuc11": 18.6, "aplos":  74.0, "mac-mini":  59.5 },
+      "+icount":  { "milkv-duo":  3.0, "pi0": 13.5, "nuc11": 38.1, "aplos":  99.0, "mac-mini":  99.4 },
+      "+loops":   { "milkv-duo":  3.7, "pi0": 16.6, "nuc11": 46.2, "aplos":  99.5, "mac-mini":  99.6 },
+      "+hotness": { "milkv-duo": 23.7, "pi0": 95.2, "nuc11": 98.0, "aplos": 100.0, "mac-mini": 100.0 },
+      "+profile": { "milkv-duo": 29.1, "pi0": 96.1, "nuc11": 98.4, "aplos": 100.0, "mac-mini": 100.0 }
+    },
+    "wall_time_s": {
+      "none":     { "milkv-duo": 133.4, "pi0": 22.9, "nuc11":  7.4, "aplos":  1.6, "mac-mini":  1.9 },
+      "+icount":  { "milkv-duo": 133.5, "pi0": 22.9, "nuc11":  7.7, "aplos":  2.7, "mac-mini":  2.7 },
+      "+loops":   { "milkv-duo": 133.5, "pi0": 22.9, "nuc11":  7.8, "aplos":  3.4, "mac-mini":  3.4 },
+      "+hotness": { "milkv-duo": 134.2, "pi0": 31.6, "nuc11": 30.5, "aplos": 29.8, "mac-mini": 30.4 },
+      "+profile": { "milkv-duo": 134.3, "pi0": 38.9, "nuc11": 37.7, "aplos": 37.4, "mac-mini": 37.2 }
+    }
+  }
+}
