@@ -1,0 +1,58 @@
+{
+  "metadata": {
+    "description": "Maximum sustained transaction rate for sysbench oltp_read_write workload against SQLite. Rate-limited using absolute-time clock_nanosleep targets. Recording writes trace to /dev/null.",
+    "workload": "sysbench oltp_read_write, 10000-row table, 20 queries/txn, 10s runs",
+    "devices": ["local", "milkv-duo", "pi0", "aplos", "mac-mini", "nuc11"],
+    "device_labels": {
+      "local":     "pc",
+      "milkv-duo": "milkv",
+      "pi0":       "rpi0",
+      "aplos":     "aplos",
+      "mac-mini":  "mac",
+      "nuc11":     "nuc"
+    },
+    "variants": ["native", "wasmtime", "wasmtime-rr"],
+    "variant_labels": {
+      "native":      "Native",
+      "wasmtime":    "Wasmtime",
+      "wasmtime-rr": "CRIMP"
+    },
+    "values": "maximum sustained throughput (txn/s) — highest rate achieving 100% of target"
+  },
+  "max_throughput": {
+    "native":      { "local": 8400, "milkv-duo": 130, "pi0": 290, "aplos": 5100, "mac-mini": 5100, "nuc11": 1100 },
+    "wasmtime":    { "local": 3600, "milkv-duo":  50, "pi0": 140, "aplos": 2400, "mac-mini": 2300, "nuc11":  310 },
+    "wasmtime-rr": { "local": 3000, "milkv-duo":  45, "pi0": 120, "aplos": 1950, "mac-mini": 1900, "nuc11":  280 }
+  },
+  "saturation_curves": {
+    "local": {
+      "native": [
+        { "target": 7000, "actual": 7000, "pct": 100 },
+        { "target": 7500, "actual": 7500, "pct": 100 },
+        { "target": 8000, "actual": 8000, "pct": 100 },
+        { "target": 8200, "actual": 8200, "pct": 100 },
+        { "target": 8400, "actual": 8400, "pct": 100 },
+        { "target": 8500, "actual": 8453, "pct": 99 },
+        { "target": 8600, "actual": 8446, "pct": 98 },
+        { "target": 9000, "actual": 8443, "pct": 93 }
+      ],
+      "wasmtime": [
+        { "target": 3000, "actual": 3000, "pct": 100 },
+        { "target": 3200, "actual": 3200, "pct": 100 },
+        { "target": 3400, "actual": 3400, "pct": 100 },
+        { "target": 3600, "actual": 3600, "pct": 100 },
+        { "target": 3700, "actual": 3698, "pct": 99 },
+        { "target": 3800, "actual": 3788, "pct": 99 },
+        { "target": 4000, "actual": 3811, "pct": 95 }
+      ],
+      "wasmtime-rr": [
+        { "target": 2800, "actual": 2800, "pct": 100 },
+        { "target": 2900, "actual": 2900, "pct": 100 },
+        { "target": 3000, "actual": 3000, "pct": 100 },
+        { "target": 3050, "actual": 3042, "pct": 99 },
+        { "target": 3100, "actual": 3023, "pct": 97 },
+        { "target": 3200, "actual": 3020, "pct": 94 }
+      ]
+    }
+  }
+}
