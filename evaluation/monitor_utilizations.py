@@ -26,9 +26,9 @@ def load_data():
 
 
 def adjusted_cpu(cpu_pct, wall_time, baseline_wall):
-    """Cap to 100% if monitor causes >0.1s wall overhead and cpu already >95%.
+    """Cap to 100% if monitor causes >5% relative wall overhead and cpu >90%.
     Returns (value, clipped)."""
-    if (wall_time - baseline_wall) > 0.1 and cpu_pct > 95.0:
+    if (wall_time - baseline_wall) / baseline_wall > 0.05 and cpu_pct > 90.0:
         return 100.0, True
     return min(cpu_pct, 100.0), False
 
