@@ -50,7 +50,7 @@ def main():
     n_bench = len(benchmarks)
     SEP     = 1.1
 
-    fig, ax = plt.subplots(figsize=(7, 5.2))
+    fig, ax = plt.subplots(figsize=(9.5, 5.2))
 
     xl      = np.arange(n_dev) * SEP
     dodge_b = np.linspace(-0.38, 0.38, n_bench)
@@ -64,19 +64,19 @@ def main():
 
     ax.set_xlim(xl[0] - SEP * 0.5, xl[-1] + SEP * 0.5)
     ax.set_xticks(xl)
-    ax.set_xticklabels(dlabels, fontsize=14)
-    ax.set_ylabel("Streaming Trace Rate (MB/s)", fontsize=14, labelpad=1)
+    ax.set_xticklabels(dlabels, fontsize=18)
+    ax.set_ylabel("Streaming Trace Rate (MB/s)", fontsize=18, labelpad=-2)
     ax.set_yscale("log")
     ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: f"{y:g}"))
-    ax.yaxis.set_tick_params(labelsize=13, which="both")
+    ax.yaxis.set_tick_params(labelsize=16, which="both")
     ax.grid(axis="y", which="major", linestyle="--", alpha=0.4, zorder=0)
     ax.grid(axis="y", which="minor", linestyle=":",  alpha=0.3,  zorder=0)
     ax.set_axisbelow(True)
     mids = (xl[:-1] + xl[1:]) / 2
     for xm in mids:
         ax.axvline(xm, color="#cccccc", linewidth=0.8, linestyle="-", zorder=0)
-    ax.legend(handles=legend_handles, fontsize=14, framealpha=0.9, loc="upper right",
-              ncol=1, handletextpad=0.4)
+    ax.legend(handles=legend_handles, fontsize=16, framealpha=0.9, loc="upper right",
+              ncol=1, handletextpad=0.4, labelspacing=0.2)
 
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
     out = PLOTS_DIR / "trace_rate.pdf"

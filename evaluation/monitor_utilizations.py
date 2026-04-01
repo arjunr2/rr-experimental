@@ -44,7 +44,7 @@ def main():
     n_monitors = len(MONITORS)
     SEP        = 1.12
 
-    fig, ax = plt.subplots(figsize=(6, 4.5))
+    fig, ax = plt.subplots(figsize=(8, 4.5))
 
     xb        = np.arange(n_devices) * SEP
     dodge     = np.linspace(-0.38, 0.38, n_monitors)
@@ -67,11 +67,11 @@ def main():
     ax.axhline(100.0, color="black", linewidth=0.8, linestyle="--", zorder=1)
     ax.set_xlim(xb[0] - SEP * 0.5, xb[-1] + SEP * 0.5)
     ax.set_xticks(xb)
-    ax.set_xticklabels([device_labels[d] for d in devices], fontsize=13)
-    ax.set_ylabel("Replay CPU Utilization (%)", fontsize=13)
+    ax.set_xticklabels([device_labels[d] for d in devices], fontsize=15)
+    ax.set_ylabel("Replay CPU Utilization (%)", fontsize=15)
     ax.yaxis.set_major_locator(ticker.FixedLocator(range(0, 101, 10)))
     ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: f"{y:.0f}" if y <= 100 else ""))
-    ax.yaxis.set_tick_params(labelsize=11, which="both")
+    ax.yaxis.set_tick_params(labelsize=14, which="both")
     ax.set_ylim(bottom=0, top=115)
     ax.grid(axis="y", which="major", linestyle="--", alpha=0.4, zorder=0)
     ax.grid(axis="y", which="minor", linestyle=":",  alpha=0.3,  zorder=0)
@@ -81,7 +81,7 @@ def main():
     for xm in mids:
         ax.axvline(xm, color="#cccccc", linewidth=0.8, linestyle="-", zorder=0)
 
-    ax.legend(handles=legend_handles, fontsize=11, framealpha=0.9,
+    ax.legend(handles=legend_handles, fontsize=14, framealpha=0.9,
               loc="upper right", ncol=n_monitors, handletextpad=0.4,
               columnspacing=0.8)
 

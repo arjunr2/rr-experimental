@@ -57,16 +57,16 @@ def draw_strip(ax, xpos, bench, device, overhead, color, marker):
                     arrowprops=dict(arrowstyle="-|>", color=color,
                                    lw=1.5, mutation_scale=10), zorder=4)
         ax.text(xpos, YMAX + 0.45, f"{raw_max:.1f}×",
-                ha="center", va="bottom", fontsize=9, color=color,
+                ha="center", va="bottom", fontsize=11, color=color,
                 rotation=0, fontweight="bold", zorder=5,
                 bbox=dict(boxstyle="square,pad=0.05", fc="white", ec="none"))
 
     for k, (y, num) in enumerate(zip(ys_clip, ["1", "2", "3"])):
-        ax.scatter(xpos, y, color=color, s=110, zorder=3, alpha=0.88,
+        ax.scatter(xpos, y, color=color, s=150, zorder=3, alpha=0.88,
                    marker=marker, edgecolors="none")
         if k == worst:
             ax.text(xpos, y, num, ha="center", va="center",
-                    fontsize=8, color="white", fontweight="bold", zorder=4)
+                    fontsize=10, color="white", fontweight="bold", zorder=4)
 
 
 def style_ax(ax, xtick_labels, ylabel=None, tick_fontsize=10, x_positions=None):
@@ -76,10 +76,10 @@ def style_ax(ax, xtick_labels, ylabel=None, tick_fontsize=10, x_positions=None):
     ax.set_xticks(x_positions)
     ax.set_xticklabels(xtick_labels, fontsize=tick_fontsize)
     if ylabel:
-        ax.set_ylabel(ylabel, fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=12)
     ax.yaxis.set_major_locator(ticker.MultipleLocator(1.0))
     ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.5))
-    ax.yaxis.set_tick_params(labelsize=10)
+    ax.yaxis.set_tick_params(labelsize=12)
     ax.grid(axis="y", which="major", linestyle="--", alpha=0.4, zorder=0)
     ax.grid(axis="y", which="minor", linestyle=":",  alpha=0.45, zorder=0)
     ax.set_axisbelow(True)
@@ -105,7 +105,7 @@ def main():
     SEP = 1.4   # multiplier between group centres
 
     fig, (ax_l, ax_r) = plt.subplots(
-        1, 2, sharey=True, figsize=(12, 4.3),
+        1, 2, sharey=True, figsize=(16, 4.3),
         gridspec_kw={"width_ratios": [1, 1], "wspace": 0.04},
     )
 
@@ -115,11 +115,11 @@ def main():
     for i, (bench, color, marker) in enumerate(zip(benchmarks, BENCH_COLORS, BENCH_MARKERS)):
         for j, device in enumerate(devices):
             draw_strip(ax_l, xl[j] + dodge_b[i], bench, device, overhead, color, marker)
-        ax_l.scatter([], [], color=color, s=55, marker=marker, label=get_benchmark_label(data, bench))
+        ax_l.scatter([], [], color=color, s=75, marker=marker, label=get_benchmark_label(data, bench))
 
-    style_ax(ax_l, dlabels, ylabel="Recording Overhead + Streaming", x_positions=xl, tick_fontsize=11)
-    ax_l.legend(fontsize=10, framealpha=0.9, loc="upper right", ncol=2,
-                handletextpad=0.4, columnspacing=0.8)
+    style_ax(ax_l, dlabels, ylabel="Recording Overhead + Streaming", x_positions=xl, tick_fontsize=12)
+    ax_l.legend(fontsize=12, framealpha=0.9, loc="upper right", ncol=2,
+                handletextpad=0.4, columnspacing=0.8, labelspacing=0.2)
 
     # ── Right panel: X = benchmarks, dodge = devices ──────────────────────
     benchmarks_r = list(benchmarks)
@@ -134,12 +134,12 @@ def main():
     for i, (device, color, marker) in enumerate(zip(devices, DEVICE_COLORS, DEVICE_MARKERS)):
         for j, bench in enumerate(benchmarks_r):
             draw_strip(ax_r, xr[j] + dodge_d[i], bench, device, overhead, color, marker)
-        ax_r.scatter([], [], color=color, s=55, marker=marker, label=get_device_label(data, device))
+        ax_r.scatter([], [], color=color, s=75, marker=marker, label=get_device_label(data, device))
 
-    style_ax(ax_r, blabels_r, tick_fontsize=10, x_positions=xr)
+    style_ax(ax_r, blabels_r, tick_fontsize=12, x_positions=xr)
     ax_r.tick_params(axis="y", which="both", left=False)
-    ax_r.legend(fontsize=10, framealpha=0.9, loc="upper right",
-                handletextpad=0.4)
+    ax_r.legend(fontsize=12, framealpha=0.9, loc="upper right",
+                handletextpad=0.4, labelspacing=0.2)
 
     # ── Shared variant key ─────────────────────────────────────────────────
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)

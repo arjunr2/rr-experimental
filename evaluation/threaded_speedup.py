@@ -72,7 +72,7 @@ def main():
     SEP     = 1.1
 
     fig, (ax_l, ax_r) = plt.subplots(
-        1, 2, sharey=True, figsize=(12, 3.8),
+        1, 2, sharey=True, figsize=(14, 3.8),
         gridspec_kw={"width_ratios": [1, 1], "wspace": 0.04},
     )
 

@@ -64,7 +64,7 @@ def main():
     n_tools = len(TOOLS)
     SEP     = 1.1
 
-    fig, ax = plt.subplots(figsize=(6, 4.5))
+    fig, ax = plt.subplots(figsize=(6.5, 4.5))
 
     xb      = np.arange(n_bench) * SEP
     dodge   = np.linspace(-0.36, 0.36, n_tools)
@@ -110,7 +110,7 @@ def main():
     ax.set_xlim(xb[0] - SEP * 0.5, xb[-1] + SEP * 0.5)
     ax.axhline(1.0, color="black", linewidth=0.9, linestyle="--", zorder=1)
     ax.set_xticks(xb)
-    ax.set_xticklabels(blabels, fontsize=12)
+    ax.set_xticklabels(blabels, fontsize=11.5)
     ax.set_ylabel("Slowdown vs Native (×)", fontsize=12)
     ax.yaxis.set_major_locator(ticker.MultipleLocator(2))
     ax.yaxis.set_minor_locator(ticker.MultipleLocator(1))
@@ -126,7 +126,7 @@ def main():
     for xm in mids:
         ax.axvline(xm, color="#cccccc", linewidth=0.8, linestyle="-", zorder=0)
 
-    ax.legend(fontsize=11, framealpha=0.9, loc="upper left",
+    ax.legend(fontsize=12, framealpha=0.9, loc="upper left",
               ncol=5, handletextpad=0.4, columnspacing=0.8,
               bbox_to_anchor=(0.0, 1.01))
 

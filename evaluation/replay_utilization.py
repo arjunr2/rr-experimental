@@ -44,7 +44,7 @@ def main():
 
     x = np.arange(len(ordered_devices))
 
-    fig, ax = plt.subplots(figsize=(5.5, 3.2))
+    fig, ax = plt.subplots(figsize=(6.5, 3.2))
 
     n_variants = len(variants)
     dodge = np.linspace(-0.15, 0.15, n_variants)
@@ -67,16 +67,16 @@ def main():
                     color=color, linewidth=4, zorder=6, solid_capstyle="butt")
 
     ax.set_xticks(x)
-    ax.set_xticklabels(device_labels, fontsize=11)
-    ax.set_ylabel("Replay CPU Utilization (%)", fontsize=11)
+    ax.set_xticklabels(device_labels, fontsize=13)
+    ax.set_ylabel("Replay CPU Utilization (%)", fontsize=12)
     ax.set_ylim(0, 100)
     ax.yaxis.set_major_locator(ticker.MultipleLocator(20))
     ax.yaxis.set_minor_locator(ticker.MultipleLocator(10))
-    ax.yaxis.set_tick_params(labelsize=11)
+    ax.yaxis.set_tick_params(labelsize=11.5)
     ax.grid(axis="y", which="major", linestyle="--", alpha=0.4, zorder=0)
     ax.grid(axis="y", which="minor", linestyle=":", alpha=0.45, zorder=0)
     ax.set_axisbelow(True)
-    ax.legend(fontsize=10, framealpha=0.9, loc="upper right")
+    ax.legend(fontsize=12, framealpha=0.9, loc="upper right")
 
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
     out = PLOTS_DIR / "replay_utilization.pdf"
