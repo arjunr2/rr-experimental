@@ -65,7 +65,7 @@ def draw_strip(ax, xpos, bench, device, overhead, color):
                 bbox=dict(boxstyle="square,pad=0.05", fc="white", ec="none"))
 
     for y, marker in zip(ys_clip, VARIANT_MARKERS):
-        ax.scatter(xpos, y, color=color, s=150, zorder=3, alpha=0.88,
+        ax.scatter(xpos, y, color=color, s=100, zorder=3, alpha=0.88,
                    marker=marker, edgecolors="none")
 
 
@@ -117,7 +117,7 @@ def main():
             draw_strip(ax_l, xl[j] + dodge_b[i], bench, device, overhead, color)
         ax_l.plot([], [], color=color, linewidth=2.5, label=get_benchmark_label(data, bench))
 
-    style_ax(ax_l, dlabels, ylabel="Recording Overhead + Streaming", x_positions=xl, tick_fontsize=12)
+    style_ax(ax_l, dlabels, ylabel="Recording + Streaming Slowdown (x)", x_positions=xl, tick_fontsize=12)
     ax_l.legend(fontsize=12, framealpha=0.9, loc="upper right", ncol=2,
                 handletextpad=0.4, columnspacing=0.8, labelspacing=0.2)
 
