@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Two-panel recording overhead plot (socat+variant / devnull time ratio).
-Left panel:  X = devices,    dodge = benchmarks, 3 numbered dots per strip.
-Right panel: X = benchmarks, dodge = devices,    3 numbered dots per strip.
-Numbers 1/2/3 = wasmtime-native / wasmtime-wasm / wizeng.
+Left panel:  X = devices,    dodge = benchmarks, 3 shaped dots per strip.
+Right panel: X = benchmarks, dodge = devices,    3 shaped dots per strip.
+Shape encodes replay variant: circle=1(wasmtime-native), diamond=2(wasmtime-wasm), square=3(wizeng).
+Color encodes benchmark (left) or device (right).
 Y axis shared; right panel suppresses Y tick labels."""
 
 import numpy as np
@@ -14,14 +15,17 @@ from data_utils import (
     get_benchmarks, get_benchmark_label, PLOTS_DIR,
 )
 
-BENCH_COLORS   = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B2", "#937860"]
-BENCH_MARKERS  = ["o", "D", "p", "s", "v", "h"]
-DEVICE_COLORS  = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B2"]
-DEVICE_MARKERS = ["o", "D", "p", "s", "v"]
+BENCH_COLORS  = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B2", "#937860"]
+DEVICE_COLORS = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B2"]
+
+# Shapes encode replay variant (same across both panels)
+VARIANT_MARKERS = ["o", "D", "s"]   # circle, diamond, square
+VARIANT_LABELS  = ["wasmtime-native", "wasmtime-wasm", "wizeng-wasm"]
 
 SOCAT_VARIANTS = ["socat+replay", "socat+decomposed-wt", "socat+wizeng"]
 YMAX = 9.0
 YMAX_PAD = 9.8   # ylim top (room for arrow + text)
+
 def compute_overhead(data):
     """Returns overhead[bench][variant][device] = best(socat_time) / no-rec_time.
     best = min of threaded and non-threaded socat time."""
@@ -39,17 +43,16 @@ def compute_overhead(data):
     return out
 
 
-def draw_strip(ax, xpos, bench, device, overhead, color, marker):
-    """Plot 3 dots connected by a vertical line; number only the worst (highest) one.
-    Values above YMAX are clipped: upward arrow + annotated actual value."""
-    ys    = [overhead[bench][var][device] for var in SOCAT_VARIANTS]
-    worst = int(np.argmax(ys))
+def draw_strip(ax, xpos, bench, device, overhead, color):
+    """Plot 3 shaped dots connected by a vertical line; number all three.
+    Shape encodes replay variant. Values above YMAX are clipped."""
+    ys      = [overhead[bench][var][device] for var in SOCAT_VARIANTS]
     raw_max = max(ys)
 
-    ys_clip = [min(y, YMAX) for y in ys]
+    ys_clip  = [min(y, YMAX) for y in ys]
     disp_max = min(raw_max, YMAX)
 
-    ax.plot([xpos, xpos], [min(ys), disp_max], color=color,
+    ax.plot([xpos, xpos], [min(ys_clip), disp_max], color=color,
             linewidth=1.5, alpha=0.5, zorder=2)
 
     if raw_max > YMAX:
@@ -61,12 +64,9 @@ def draw_strip(ax, xpos, bench, device, overhead, color, marker):
                 rotation=0, fontweight="bold", zorder=5,
                 bbox=dict(boxstyle="square,pad=0.05", fc="white", ec="none"))
 
-    for k, (y, num) in enumerate(zip(ys_clip, ["1", "2", "3"])):
+    for y, marker in zip(ys_clip, VARIANT_MARKERS):
         ax.scatter(xpos, y, color=color, s=150, zorder=3, alpha=0.88,
                    marker=marker, edgecolors="none")
-        if k == worst:
-            ax.text(xpos, y, num, ha="center", va="center",
-                    fontsize=10, color="white", fontweight="bold", zorder=4)
 
 
 def style_ax(ax, xtick_labels, ylabel=None, tick_fontsize=10, x_positions=None):
@@ -112,10 +112,10 @@ def main():
     # ── Left panel: X = devices, dodge = benchmarks ───────────────────────
     xl = np.arange(n_dev) * SEP
     dodge_b = np.linspace(-0.38, 0.38, n_bench)
-    for i, (bench, color, marker) in enumerate(zip(benchmarks, BENCH_COLORS, BENCH_MARKERS)):
+    for i, (bench, color) in enumerate(zip(benchmarks, BENCH_COLORS)):
         for j, device in enumerate(devices):
-            draw_strip(ax_l, xl[j] + dodge_b[i], bench, device, overhead, color, marker)
-        ax_l.scatter([], [], color=color, s=75, marker=marker, label=get_benchmark_label(data, bench))
+            draw_strip(ax_l, xl[j] + dodge_b[i], bench, device, overhead, color)
+        ax_l.plot([], [], color=color, linewidth=2.5, label=get_benchmark_label(data, bench))
 
     style_ax(ax_l, dlabels, ylabel="Recording Overhead + Streaming", x_positions=xl, tick_fontsize=12)
     ax_l.legend(fontsize=12, framealpha=0.9, loc="upper right", ncol=2,
@@ -131,17 +131,25 @@ def main():
 
     xr = np.arange(n_bench) * SEP
     dodge_d = np.linspace(-0.32, 0.32, n_dev)
-    for i, (device, color, marker) in enumerate(zip(devices, DEVICE_COLORS, DEVICE_MARKERS)):
+    for i, (device, color) in enumerate(zip(devices, DEVICE_COLORS)):
         for j, bench in enumerate(benchmarks_r):
-            draw_strip(ax_r, xr[j] + dodge_d[i], bench, device, overhead, color, marker)
-        ax_r.scatter([], [], color=color, s=75, marker=marker, label=get_device_label(data, device))
+            draw_strip(ax_r, xr[j] + dodge_d[i], bench, device, overhead, color)
+        ax_r.plot([], [], color=color, linewidth=2.5, label=get_device_label(data, device))
 
     style_ax(ax_r, blabels_r, tick_fontsize=12, x_positions=xr)
     ax_r.tick_params(axis="y", which="both", left=False)
-    ax_r.legend(fontsize=12, framealpha=0.9, loc="upper right",
+    device_legend = ax_r.legend(fontsize=12, framealpha=0.9, loc="upper right",
+                                handletextpad=0.4, labelspacing=0.2)
+    ax_r.add_artist(device_legend)
+
+    variant_handles = [
+        plt.scatter([], [], color="gray", s=75, marker=m, label=lbl)
+        for m, lbl in zip(VARIANT_MARKERS, VARIANT_LABELS)
+    ]
+    ax_r.legend(handles=variant_handles, fontsize=12, framealpha=0.9,
+                loc="upper right", bbox_to_anchor=(0.83, 1.0),
                 handletextpad=0.4, labelspacing=0.2)
 
-    # ── Shared variant key ─────────────────────────────────────────────────
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
     out = PLOTS_DIR / "record_streaming_overhead.pdf"
     fig.tight_layout()
